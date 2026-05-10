@@ -33,3 +33,7 @@ Thumbs.db
 
 # Optional: exported JSON scratch files at repo root
 /demo-data*.json
+
+# Bundled demo export (large; regenerate with npm run export-demo)
+/public/demo-data.json
+/public/demos-index.json

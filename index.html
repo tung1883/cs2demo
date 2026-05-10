@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CS2 2D demo viewer</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="toolbar">
+        <h1>CS2 2D demo viewer</h1>
+        <div class="controls demo-source-bar">
+          <label class="demo-file">
+            <span>CS2 .dem</span>
+            <input type="file" id="demo-dem-input" accept=".dem,.DEM" />
+          </label>
+          <button type="button" id="demo-export-dem">Export &amp; load</button>
+          <span class="demo-source-divider" aria-hidden="true"></span>
+          <label class="demo-source">
+            <span>Bundled demo</span>
+            <select id="demo-url-select"></select>
+          </label>
+          <button type="button" id="demo-load-url">Load</button>
+          <span class="demo-source-divider" aria-hidden="true"></span>
+          <label class="demo-file">
+            <span>JSON file</span>
+            <input type="file" id="demo-file-input" accept="application/json,.json" />
+          </label>
+        </div>
+        <div class="meta" id="meta">
+          Choose a .dem (exported in-browser via WASM; <code>npm run dev</code> adds a faster native fallback), bundled JSON, or export file.
+        </div>
+        <div id="export-progress" class="export-progress" hidden aria-live="polite">
+          <div class="export-progress-track">
+            <div id="export-progress-fill" class="export-progress-fill"></div>
+          </div>
+          <span id="export-progress-label" class="export-progress-label"></span>
+        </div>
+        <div class="controls">
+          <button type="button" id="play" aria-pressed="false">Play</button>
+          <label class="seek">
+            <span>Tick</span>
+            <input type="range" id="scrub" min="0" max="0" value="0" />
+          </label>
+          <span id="time-readout" class="readout"></span>
+          <span id="bomb-hud" class="readout bomb-hud" aria-live="polite"></span>
+          <label class="toggle">
+            <input type="checkbox" id="show-shots" checked />
+            <span>Gunshots</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="show-utilities" checked />
+            <span>Utilities</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="show-effects" checked />
+            <span>Effects</span>
+          </label>
+        </div>
+      </header>
+      <main class="stage">
+        <canvas id="viewport" width="900" height="900"></canvas>
+        <aside class="legend" id="legend">
+          <div id="legend-help" class="legend-help"></div>
+          <div id="legend-roster" class="legend-roster" aria-live="polite"></div>
+        </aside>
+      </main>
+      <p class="hint" id="error" hidden></p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "demos": [
+    { "label": "Bundled export (demo-data.json)", "url": "/demo-data.json" }
+  ]
+}

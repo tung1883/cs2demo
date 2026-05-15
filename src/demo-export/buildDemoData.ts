@@ -2,7 +2,7 @@
  * Browser-safe demo → viewer JSON (Uint8Array in / DemoData out).
  * Mirrors scripts/demo-buffer-to-json.mjs for WASM bindings (no Buffer / no NAPI-only APIs).
  */
-import type { DemoData, PlayerMeta } from "../demoTypes";
+import type { DemoData, KillTuple, PlayerMeta, RoundResultTuple } from "../demoTypes";
 
 export type ExportProgressEvent = {
   phase: string;
@@ -74,6 +74,10 @@ type DemoEvent = Record<string, unknown> & {
   blind_duration?: unknown;
   blind_percentage?: unknown;
   total_rounds_played?: unknown;
+  attacker_steamid?: unknown;
+  headshot?: unknown;
+  winner?: unknown;
+  reason?: unknown;
 };
 
 /** Loose tuple builder for shots/utilities before casting to DemoData */
@@ -585,9 +589,10 @@ export async function buildDemoData(
         "bomb_defused",
         "bomb_dropped",
         "bomb_pickup",
+        "player_death",
       ],
       ["X", "Y", "yaw", "pitch"],
-      [],
+      ["attacker_steamid", "weapon", "headshot"],
     ) as DemoEvent[];
   } catch {
     gameplayEvs = [];
@@ -603,6 +608,7 @@ export async function buildDemoData(
   const bombEnds: [number, "exploded" | "defused"][] = [];
   const bombDrops: [number, number, number][] = [];
   const bombPickupTicks: number[] = [];
+  const kills: KillTuple[] = [];
 
   for (const ev of gameplayEvs) {
     const en = ev.event_name;
@@ -680,10 +686,37 @@ export async function buildDemoData(
           bombPickupTicks.push(Number(t));
         break;
       }
+      case "player_death": {
+        const victimIdx = steamToIdx[String(ev.user_steamid)];
+        if (victimIdx === undefined) break;
+        const vx = ev.user_X;
+        const vy = ev.user_Y;
+        if (!Number.isFinite(vx) || !Number.isFinite(vy)) break;
+        const attackerSid = ev.attacker_steamid;
+        const attackerIdx =
+          attackerSid !== undefined && attackerSid !== null
+            ? (steamToIdx[String(attackerSid)] ?? -1)
+            : -1;
+        const weapon = shortenWeapon(ev.weapon ?? "unknown");
+        const headshot = ev.headshot ? 1 : 0;
+        const roundNum = Number(ev.total_rounds_played ?? 0);
+        kills.push([
+          Number(ev.tick),
+          roundNum,
+          attackerIdx,
+          victimIdx,
+          weapon,
+          headshot,
+          Number(vx),
+          Number(vy),
+        ]);
+        break;
+      }
       default:
         break;
     }
   }
+  kills.sort((a, b) => a[0] - b[0]);
 
   sortByTick(smokePops);
   sortByTick(hePops);
@@ -747,7 +780,7 @@ export async function buildDemoData(
         "round_officially_ended",
       ],
       [],
-      ["total_rounds_played"],
+      ["total_rounds_played", "winner", "reason"],
     ) as DemoEvent[];
   } catch {
     roundBundle = [];
@@ -772,6 +805,26 @@ export async function buildDemoData(
     roundClockStarts,
   );
 
+  const roundResults: RoundResultTuple[] = roundHudEnds
+    .filter((e) => e.event_name === "round_end")
+    .map((e): RoundResultTuple | null => {
+      const t = e.tick;
+      if (!Number.isFinite(t)) return null;
+      const rn = typeof e.total_rounds_played === "number" ? Math.trunc(e.total_rounds_played) : -1;
+      if (rn < 0) return null;
+      const winner =
+        typeof e.winner === "number" && Number.isFinite(e.winner)
+          ? Math.trunc(e.winner)
+          : 0;
+      const reason =
+        typeof e.reason === "number" && Number.isFinite(e.reason)
+          ? Math.trunc(e.reason)
+          : 0;
+      return [Number(t), rn, winner, reason];
+    })
+    .filter((x): x is RoundResultTuple => x !== null)
+    .sort((a, b) => a[0] - b[0]);
+
   return {
     mapName: header.map_name ?? "unknown",
     demoPath: demoLabel,
@@ -792,5 +845,7 @@ export async function buildDemoData(
     bombPickupTicks,
     roundClockStarts,
     roundEndsHud,
+    kills: kills as DemoData["kills"],
+    roundResults: roundResults as DemoData["roundResults"],
   };
 }

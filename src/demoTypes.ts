@@ -34,6 +34,14 @@ export type BombDropTuple = [number, number, number];
 /** Flash highlight: `player_blind` tick, victim roster idx, strength 0–1 */
 export type FlashVictimTuple = [number, number, number];
 
+/**
+ * player_death: [tick, round, attackerIdx(-1=world), victimIdx, weapon, headshot(0|1), victimX, victimY]
+ */
+export type KillTuple = [number, number, number, number, string, number, number, number];
+
+/** round_end: [tick, round, winnerTeam(2=T|3=CT), reasonCode] */
+export type RoundResultTuple = [number, number, number, number];
+
 /** Demo tick when live round clock starts (`round_freeze_end`, paired with `round_start` in export); matches `Frame[1]` */
 export type RoundClockStartTuple = [number, number];
 /** Round ended (`round_end` / `round_officially_ended`); tick, round — for post-round gaps before next live clock */
@@ -67,4 +75,8 @@ export type DemoData = {
   roundClockStarts?: RoundClockStartTuple[];
   /** When each round ends for HUD (post-win delay before next live clock) — re-export */
   roundEndsHud?: RoundEndHudTuple[];
+  /** Kill events from player_death — re-export to populate */
+  kills?: KillTuple[];
+  /** Round outcomes from round_end — re-export to populate */
+  roundResults?: RoundResultTuple[];
 };

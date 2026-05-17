@@ -22,6 +22,8 @@ import {
   worldToOverviewPixel,
 } from "./utils/overviewTransform";
 import { formatTime } from "./utils/time";
+import { getPositionName } from "./mapPositions";
+import { analyzeDemo, type DemoAnalysis } from "./analysis/engine";
 
 const defaultBBox: BoundingBox = {
   minX: -2500,
@@ -49,11 +51,19 @@ const errorEl = document.getElementById("error")!;
 const showShotsEl = document.getElementById("show-shots") as HTMLInputElement;
 const showUtilitiesEl = document.getElementById("show-utilities") as HTMLInputElement;
 const showEffectsEl = document.getElementById("show-effects") as HTMLInputElement;
+const showPositionsEl = document.getElementById("show-positions") as HTMLInputElement;
+const showHeatmapEl = document.getElementById("show-heatmap") as HTMLInputElement;
+const heatmapPlayerSelectEl = document.getElementById("heatmap-player-select") as HTMLSelectElement;
 const demoUrlSelect = document.getElementById("demo-url-select") as HTMLSelectElement;
 const demoLoadUrlBtn = document.getElementById("demo-load-url") as HTMLButtonElement;
 const demoFileInput = document.getElementById("demo-file-input") as HTMLInputElement;
 const demoDemInput = document.getElementById("demo-dem-input") as HTMLInputElement;
 const demoExportDemBtn = document.getElementById("demo-export-dem") as HTMLButtonElement;
+const analysisContentEl = document.getElementById("analysis-content")!;
+const speedBtns = document.querySelectorAll<HTMLButtonElement>(".speed-btn");
+const tabBtns = document.querySelectorAll<HTMLButtonElement>(".legend-tab");
+const panelLive = document.getElementById("panel-live")!;
+const panelAnalysis = document.getElementById("panel-analysis")!;
 
 let data: DemoData | null = null;
 let frameIndex = 0;
@@ -61,6 +71,9 @@ let playing = false;
 let raf = 0;
 let lastFrameTime = 0;
 let playAccum = 0;
+let playSpeed = 1;
+let analysis: DemoAnalysis | null = null;
+let analysisPlayerIdx = -1;
 
 function stopPlayback(): void {
   playing = false;
@@ -784,9 +797,18 @@ function drawPlayers(frame: Frame | undefined): void {
 
     if (data) {
       const name = data.players[idx]?.name ?? `#${idx}`;
-      ctx.font = "11px Segoe UI, system-ui, sans-serif";
-      ctx.fillStyle = "rgba(232,234,237,0.88)";
+      ctx.font = "bold 11px Segoe UI, system-ui, sans-serif";
+      ctx.fillStyle = "rgba(232,234,237,0.92)";
       ctx.fillText(name, cx + 9, cy + 4);
+
+      if (showPositionsEl.checked) {
+        const posName = getPositionName(data.mapName, x, y);
+        if (posName) {
+          ctx.font = "9px Segoe UI, system-ui, sans-serif";
+          ctx.fillStyle = "rgba(160,185,220,0.78)";
+          ctx.fillText(posName, cx + 9, cy + 15);
+        }
+      }
     }
   }
 }
@@ -836,11 +858,48 @@ function drawBombLayer(frame: Frame | undefined): void {
   ctx.restore();
 }
 
+function drawHeatmapOverlay(): void {
+  if (!showHeatmapEl.checked || !analysis) return;
+  const pidx = analysisPlayerIdx;
+  const hm = pidx >= 0 ? analysis.heatmaps.get(pidx) : undefined;
+  if (!hm) return;
+
+  const W = hm.gridW;
+  const H = hm.gridH;
+  const spanX = hm.worldMaxX - hm.worldMinX || 1;
+  const spanY = hm.worldMaxY - hm.worldMinY || 1;
+  const cellRx = (spanX / W) * 0.6;
+  const cellRy = (spanY / H) * 0.6;
+
+  ctx.save();
+  for (let gy = 0; gy < H; gy++) {
+    for (let gx = 0; gx < W; gx++) {
+      const d = hm.grid[gy * W + gx];
+      if (d < 0.03) continue;
+      const wx = hm.worldMinX + (gx + 0.5) * (spanX / W);
+      const wy = hm.worldMinY + (gy + 0.5) * (spanY / H);
+      const c = worldXYToCanvas(wx, wy);
+      const cxPx = worldRadiusToCanvasPx(cellRx);
+      const cyPx = worldRadiusToCanvasPx(cellRy);
+      const r = Math.max(cxPx, cyPx, 2);
+
+      const hue = (1 - d) * 240;
+      const alpha = 0.12 + d * 0.45;
+      ctx.fillStyle = `hsla(${hue},90%,60%,${alpha})`;
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, r, r, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
 function drawFrame(frame: Frame | undefined): void {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
   drawMapLayout();
+  drawHeatmapOverlay();
   const tick = frame?.[0] ?? 0;
   drawUtilityThrows(tick);
   drawGunshots(tick);
@@ -1017,6 +1076,233 @@ function buildLegend(): void {
     `<div class="legend-note"><strong>Project layout:</strong> helper code lives under <code>src/utils/</code>; it isn’t rendered on the canvas.<br/><br/>${mapImgHelp}<strong>Roster panel:</strong> team cash totals + per-player money, active gun, and grenades when exported from a current <code>.dem</code>. A lone em dash (—) means missing data: old JSON without economy rows (re-export), demo/parser skipped that field on some ticks, no grenades in <code>inventory</code>, or no equipped weapon name on that sample.<br/><br/><strong>Bomb:</strong> green ring = carrier (<code>inventory</code> C4); amber diamond = dropped; red disk + fuse = planted (${BOMB_FUSE_SEC}s fuse cap; ends sooner if demo records explode/defuse). Re-export JSON for bomb fields.<br/><br/><strong>Round clock:</strong> Uses <code>roundClockStarts</code> + <code>roundEndsHud</code>: live countdown after <code>round_freeze_end</code>; buy-time freeze shows <strong>1:55 · freeze</strong> (not confused with post-win <strong>0:00 · between rounds</strong>). Older JSON without <code>roundEndsHud</code> falls back to frame-based timing (re-export).<br/><br/><strong>Gunshots:</strong> slim white beams from <code>weapon_fire</code> (ballistic only).<br/><br/><strong>Utilities:</strong> tinted throw beams.<br/><br/><strong>Effects:</strong> smoke = white disk with seconds left (viewer window ${SMOKE_LIFETIME_SEC}s); HE / flash / molotov from detonation events. Gold halo = flashed player when <code>player_blind</code> is exported.</div>`;
 }
 
+function pct(n: number): string {
+  return `${n.toFixed(0)}%`;
+}
+
+function kdColor(kd: number): string {
+  if (kd >= 1.5) return "good";
+  if (kd >= 0.8) return "";
+  return "bad";
+}
+
+function renderBar(value: number, max: number, cls = ""): string {
+  const w = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+  return `<div class="analysis-bar-track"><div class="analysis-bar-fill ${cls ? `analysis-bar-fill--${cls}` : ""}" style="width:${w.toFixed(1)}%"></div></div>`;
+}
+
+function buildAnalysisPanel(): void {
+  if (!data || !analysis) {
+    analysisContentEl.innerHTML = '<p class="analysis-empty">Load a demo to see analysis.</p>';
+    return;
+  }
+
+  const parts: string[] = [];
+
+  // Player selector
+  parts.push(`<select class="analysis-player-select" id="analysis-player-sel">`);
+  parts.push(`<option value="-1">— All players (team view) —</option>`);
+  for (const p of analysis.players) {
+    const team = p.team === 2 ? "T" : p.team === 3 ? "CT" : `T${p.team}`;
+    const sel = p.idx === analysisPlayerIdx ? " selected" : "";
+    parts.push(`<option value="${p.idx}"${sel}>[${team}] ${escapeHtml(p.name)}</option>`);
+  }
+  parts.push(`</select>`);
+
+  if (analysisPlayerIdx >= 0) {
+    const ps = analysis.players.find((p) => p.idx === analysisPlayerIdx);
+    if (ps) {
+      // Combat stats
+      parts.push(`<div class="analysis-section">`);
+      parts.push(`<p class="analysis-section-title">Combat</p>`);
+      const kdCls = kdColor(ps.kdRatio);
+      parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">K / D / KD</span><span class="analysis-stat-value analysis-stat-value--${kdCls || ""}">
+        ${ps.kills} / ${ps.deaths} / ${ps.kdRatio.toFixed(2)}</span></div>`);
+      parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Headshot rate</span><span class="analysis-stat-value">${pct(ps.headshotPct)}</span></div>`);
+      parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Rounds played</span><span class="analysis-stat-value">${ps.roundsPlayed}</span></div>`);
+
+      if (ps.weaponKills.length > 0) {
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Top weapon</span><span class="analysis-stat-value">${escapeHtml(ps.favoriteWeapon ?? "—")}</span></div>`);
+        const maxWK = ps.weaponKills[0].count;
+        for (const wk of ps.weaponKills.slice(0, 4)) {
+          parts.push(`<div class="analysis-bar-row">`);
+          parts.push(`<div class="analysis-bar-label"><span>${escapeHtml(wk.weapon)}</span><span>${wk.count} kill${wk.count !== 1 ? "s" : ""}</span></div>`);
+          parts.push(renderBar(wk.count, maxWK));
+          parts.push(`</div>`);
+        }
+      }
+      parts.push(`</div>`);
+
+      // Positioning
+      if (ps.topAreas.length > 0) {
+        parts.push(`<div class="analysis-section">`);
+        parts.push(`<p class="analysis-section-title">Positioning</p>`);
+        for (const a of ps.topAreas.slice(0, 5)) {
+          parts.push(`<div class="analysis-bar-row">`);
+          parts.push(`<div class="analysis-bar-label"><span>${escapeHtml(a.area)}</span><span>${pct(a.pct * 100)}</span></div>`);
+          parts.push(renderBar(a.pct, 1));
+          parts.push(`</div>`);
+        }
+        if (ps.deathAreas.length > 0) {
+          parts.push(`<div class="analysis-stat-row" style="margin-top:0.5rem"><span class="analysis-stat-label" style="font-weight:600">Most deaths at</span></div>`);
+          for (const da of ps.deathAreas.slice(0, 3)) {
+            parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label" style="padding-left:0.5rem">${escapeHtml(da.area)}</span><span class="analysis-stat-value analysis-stat-value--bad">${da.ticks}×</span></div>`);
+          }
+        }
+        if (ps.killAreas.length > 0) {
+          parts.push(`<div class="analysis-stat-row" style="margin-top:0.35rem"><span class="analysis-stat-label" style="font-weight:600">Most kills at</span></div>`);
+          for (const ka of ps.killAreas.slice(0, 3)) {
+            parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label" style="padding-left:0.5rem">${escapeHtml(ka.area)}</span><span class="analysis-stat-value analysis-stat-value--good">${ka.ticks}×</span></div>`);
+          }
+        }
+        parts.push(`</div>`);
+      }
+
+      // Timing
+      {
+        parts.push(`<div class="analysis-section">`);
+        parts.push(`<p class="analysis-section-title">Timing &amp; Habits</p>`);
+
+        if (ps.firstShotSamples >= 3 && ps.firstShotAvgSec >= 0) {
+          const vulnClass = ps.firstShotStdDev <= 10 ? "analysis-stat-value--warn" : "";
+          parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">First peek/shot avg</span><span class="analysis-stat-value ${vulnClass}">${ps.firstShotAvgSec.toFixed(0)}s ±${ps.firstShotStdDev.toFixed(0)}s</span></div>`);
+          if (ps.firstShotStdDev <= 10) {
+            const lo = Math.max(0, ps.firstShotAvgSec - ps.firstShotStdDev);
+            const hi = ps.firstShotAvgSec + ps.firstShotStdDev;
+            parts.push(`<div class="timing-vuln-badge">⚠ Timing window: ${lo.toFixed(0)}s–${hi.toFixed(0)}s</div>`);
+          }
+        }
+
+        if (ps.deathTimingSamples >= 3 && ps.deathTimingAvgSec >= 0) {
+          const vulnClass = ps.deathTimingStdDev <= 12 ? "analysis-stat-value--bad" : "";
+          parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Avg death timing</span><span class="analysis-stat-value ${vulnClass}">${ps.deathTimingAvgSec.toFixed(0)}s ±${ps.deathTimingStdDev.toFixed(0)}s</span></div>`);
+          if (ps.deathTimingStdDev <= 12) {
+            parts.push(`<div class="timing-vuln-badge timing-vuln-badge--danger">⚠ Exploitable: opponent can time ~${ps.deathTimingAvgSec.toFixed(0)}s</div>`);
+          }
+        }
+
+        if (ps.kills > 0 && ps.avgKillTimeSec >= 0) {
+          parts.push(`<div class="analysis-stat-row" style="margin-top:0.4rem"><span class="analysis-stat-label">Avg kill timing</span><span class="analysis-stat-value">${ps.avgKillTimeSec.toFixed(0)}s</span></div>`);
+          parts.push(`<div class="analysis-bar-label" style="margin-top:0.3rem"><span style="color:#e05555">Early &lt;40s</span><span>Mid</span><span style="color:#5b8fd8">Late &gt;75s</span></div>`);
+          parts.push(`<div class="timing-bar">`);
+          parts.push(`<div class="timing-bar-early" style="flex:${Math.max(ps.earlyPct, 0.01)}" title="Early ${pct(ps.earlyPct)}"></div>`);
+          parts.push(`<div class="timing-bar-mid" style="flex:${Math.max(ps.midPct, 0.01)}" title="Mid ${pct(ps.midPct)}"></div>`);
+          parts.push(`<div class="timing-bar-late" style="flex:${Math.max(ps.latePct, 0.01)}" title="Late ${pct(ps.latePct)}"></div>`);
+          parts.push(`</div>`);
+          parts.push(`<div class="analysis-bar-label"><span>${pct(ps.earlyPct)}</span><span>${pct(ps.midPct)}</span><span>${pct(ps.latePct)}</span></div>`);
+        }
+
+        parts.push(`</div>`);
+      }
+
+      // Grenades
+      const totalUtil = ps.smokes + ps.flashes + ps.hes + ps.molotovs;
+      if (totalUtil > 0) {
+        parts.push(`<div class="analysis-section">`);
+        parts.push(`<p class="analysis-section-title">Utility Usage</p>`);
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Smokes</span><span class="analysis-stat-value">${ps.smokes}</span></div>`);
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Flashes</span><span class="analysis-stat-value">${ps.flashes}</span></div>`);
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">HE grenades</span><span class="analysis-stat-value">${ps.hes}</span></div>`);
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Molotovs</span><span class="analysis-stat-value">${ps.molotovs}</span></div>`);
+        if (ps.roundsPlayed > 0) {
+          parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Util/round avg</span><span class="analysis-stat-value">${(totalUtil / ps.roundsPlayed).toFixed(1)}</span></div>`);
+        }
+        parts.push(`</div>`);
+      }
+    }
+  } else {
+    // Team view
+    for (const ts of analysis.teams) {
+      const teamLabel = ts.team === 2 ? "T Side" : "CT Side";
+      const teamCol = ts.team === 2 ? "t" : "ct";
+      const total = ts.roundsWon + ts.roundsLost;
+      parts.push(`<div class="analysis-section">`);
+      parts.push(`<div class="analysis-team-header"><div class="analysis-team-badge" style="background:${ts.team === 2 ? "var(--t)" : "var(--ct)"}"></div><span class="analysis-section-title" style="margin:0">${teamLabel}</span></div>`);
+      if (total > 0) {
+        const wr = (ts.roundsWon / total) * 100;
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Win rate</span><span class="analysis-stat-value">${ts.roundsWon}/${total} (${pct(wr)})</span></div>`);
+        parts.push(renderBar(ts.roundsWon, total, teamCol));
+      }
+      if (ts.team === 2) {
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Bombs planted</span><span class="analysis-stat-value">${ts.bombsPlanted}</span></div>`);
+        if (ts.bombsPlanted > 0) {
+          parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Exploded / defused</span><span class="analysis-stat-value">${ts.bombsExploded} / ${ts.bombsDefused}</span></div>`);
+        }
+      }
+      if (ts.firstEngagementSamples >= 4 && ts.firstEngagementAvgSec >= 0) {
+        const vulnClass = ts.firstEngagementStdDev <= 10 ? "analysis-stat-value--warn" : "";
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">First engagement avg</span><span class="analysis-stat-value ${vulnClass}">${ts.firstEngagementAvgSec.toFixed(0)}s ±${ts.firstEngagementStdDev.toFixed(0)}s</span></div>`);
+        if (ts.firstEngagementStdDev <= 10) {
+          const lo = Math.max(0, ts.firstEngagementAvgSec - ts.firstEngagementStdDev);
+          const hi = ts.firstEngagementAvgSec + ts.firstEngagementStdDev;
+          parts.push(`<div class="timing-vuln-badge">⚠ Predictable window: ${lo.toFixed(0)}s–${hi.toFixed(0)}s</div>`);
+        }
+      }
+      if (ts.commonAreas.length > 0) {
+        parts.push(`<div style="margin-top:0.45rem"><span class="analysis-stat-label" style="font-weight:600;color:var(--text)">Most active zones</span></div>`);
+        for (const a of ts.commonAreas.slice(0, 5)) {
+          parts.push(`<div class="analysis-bar-row">`);
+          parts.push(`<div class="analysis-bar-label"><span>${escapeHtml(a.area)}</span><span>${pct(a.pct * 100)}</span></div>`);
+          parts.push(renderBar(a.pct, 1, teamCol));
+          parts.push(`</div>`);
+        }
+      }
+      parts.push(`</div>`);
+    }
+
+    // Player K/D summary
+    parts.push(`<div class="analysis-section">`);
+    parts.push(`<p class="analysis-section-title">Player Summary</p>`);
+    const sorted = [...analysis.players].sort((a, b) => b.kdRatio - a.kdRatio);
+    for (const p of sorted) {
+      const teamLabel = p.team === 2 ? "T" : p.team === 3 ? "CT" : "?";
+      const col = p.team === 2 ? "var(--t)" : "var(--ct)";
+      const kdCls = kdColor(p.kdRatio);
+      parts.push(`<div class="analysis-stat-row">`);
+      parts.push(`<span class="analysis-stat-label"><span style="color:${col};font-size:0.65rem;margin-right:0.3rem">[${teamLabel}]</span>${escapeHtml(p.name)}</span>`);
+      parts.push(`<span class="analysis-stat-value${kdCls ? ` analysis-stat-value--${kdCls}` : ""}">${p.kills}/${p.deaths} (${p.kdRatio.toFixed(2)})</span>`);
+      parts.push(`</div>`);
+    }
+    parts.push(`</div>`);
+  }
+
+  // Insights
+  if (analysis.insights.length > 0) {
+    parts.push(`<div class="analysis-section">`);
+    parts.push(`<p class="analysis-section-title">AI Insights</p>`);
+    parts.push(`<ul class="analysis-insights">`);
+    for (const ins of analysis.insights) {
+      parts.push(`<li class="analysis-insight">${escapeHtml(ins)}</li>`);
+    }
+    parts.push(`</ul>`);
+    parts.push(`</div>`);
+  }
+
+  analysisContentEl.innerHTML = parts.join("");
+
+  const sel = document.getElementById("analysis-player-sel") as HTMLSelectElement | null;
+  if (sel) {
+    sel.addEventListener("change", () => {
+      analysisPlayerIdx = Number(sel.value);
+      buildAnalysisPanel();
+      render();
+    });
+  }
+}
+
+function updateHeatmapPlayerSelect(): void {
+  if (!data) {
+    heatmapPlayerSelectEl.innerHTML = '<option value="-1">All</option>';
+    return;
+  }
+  const parts: string[] = ['<option value="-1">All</option>'];
+  for (const p of data.players) {
+    const team = p.team === 2 ? "[T]" : p.team === 3 ? "[CT]" : "";
+    parts.push(`<option value="${p.i}">${team} ${escapeHtml(p.name)}</option>`);
+  }
+  heatmapPlayerSelectEl.innerHTML = parts.join("");
+}
+
 function escapeAttr(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -1051,7 +1337,7 @@ function tickPlayback(ts: number): void {
   lastFrameTime = ts;
   playAccum += dt;
   while (frameIndex < data.frames.length - 1) {
-    const stepSec = secondsForFrameStep(frameIndex);
+    const stepSec = secondsForFrameStep(frameIndex) / Math.max(0.1, playSpeed);
     if (playAccum < stepSec) break;
     playAccum -= stepSec;
     frameIndex += 1;
@@ -1379,6 +1665,39 @@ showEffectsEl.addEventListener("change", () => {
   render();
 });
 
+showPositionsEl.addEventListener("change", () => {
+  render();
+});
+
+showHeatmapEl.addEventListener("change", () => {
+  render();
+});
+
+heatmapPlayerSelectEl.addEventListener("change", () => {
+  analysisPlayerIdx = Number(heatmapPlayerSelectEl.value);
+  render();
+});
+
+speedBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    playSpeed = Number(btn.dataset.speed ?? "1");
+    speedBtns.forEach((b) => b.classList.toggle("speed-btn--active", b === btn));
+  });
+});
+
+tabBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    tabBtns.forEach((b) => {
+      b.classList.toggle("legend-tab--active", b === btn);
+      b.setAttribute("aria-selected", b === btn ? "true" : "false");
+    });
+    const tab = btn.dataset.tab;
+    panelLive.classList.toggle("legend-panel--hidden", tab !== "live");
+    panelAnalysis.classList.toggle("legend-panel--hidden", tab !== "analysis");
+    if (tab === "analysis" && analysis) buildAnalysisPanel();
+  });
+});
+
 async function tryLoadOverviewImage(mapName: string): Promise<HTMLImageElement | null> {
   const dirs = ["/map/", "/maps/"];
   const names = [`${mapName}.png`, `${mapName}_radar.png`, "image.png"];
@@ -1443,8 +1762,14 @@ async function applyDemoPayload(parsed: DemoData): Promise<void> {
   scrub.max = String(Math.max(0, data.frames.length - 1));
   scrub.value = "0";
   frameIndex = 0;
+  analysisPlayerIdx = -1;
+
+  analysis = analyzeDemo(data, bb ?? defaultBBox);
+  updateHeatmapPlayerSelect();
+
   setMetaLine();
   buildLegend();
+  buildAnalysisPanel();
   render();
 }
 

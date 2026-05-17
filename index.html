@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CS2 2D demo viewer</title>
+    <title>CS2 2D Demo Viewer</title>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
     <div id="app">
       <header class="toolbar">
-        <h1>CS2 2D demo viewer</h1>
+        <h1>CS2 2D Demo Viewer</h1>
         <div class="controls demo-source-bar">
           <label class="demo-file">
             <span>CS2 .dem</span>
@@ -37,8 +37,15 @@
           </div>
           <span id="export-progress-label" class="export-progress-label"></span>
         </div>
-        <div class="controls">
+        <div class="controls playback-bar">
           <button type="button" id="play" aria-pressed="false">Play</button>
+          <div class="speed-group">
+            <span class="speed-label">Speed</span>
+            <button type="button" class="speed-btn" data-speed="0.5">0.5×</button>
+            <button type="button" class="speed-btn speed-btn--active" data-speed="1">1×</button>
+            <button type="button" class="speed-btn" data-speed="2">2×</button>
+            <button type="button" class="speed-btn" data-speed="4">4×</button>
+          </div>
           <label class="seek">
             <span>Tick</span>
             <input type="range" id="scrub" min="0" max="0" value="0" />
@@ -57,13 +64,36 @@
             <input type="checkbox" id="show-effects" checked />
             <span>Effects</span>
           </label>
+          <label class="toggle">
+            <input type="checkbox" id="show-positions" checked />
+            <span>Areas</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="show-heatmap" />
+            <span>Heatmap</span>
+          </label>
+          <label class="heatmap-player-wrap">
+            <span>Player</span>
+            <select id="heatmap-player-select" class="heatmap-player-select"></select>
+          </label>
         </div>
       </header>
       <main class="stage">
         <canvas id="viewport" width="900" height="900"></canvas>
         <aside class="legend" id="legend">
-          <div id="legend-help" class="legend-help"></div>
-          <div id="legend-roster" class="legend-roster" aria-live="polite"></div>
+          <div class="legend-tabs" role="tablist">
+            <button class="legend-tab legend-tab--active" role="tab" aria-selected="true" data-tab="live" id="tab-live">Live</button>
+            <button class="legend-tab" role="tab" aria-selected="false" data-tab="analysis" id="tab-analysis">Analysis</button>
+          </div>
+          <div id="panel-live" class="legend-panel">
+            <div id="legend-help" class="legend-help"></div>
+            <div id="legend-roster" class="legend-roster" aria-live="polite"></div>
+          </div>
+          <div id="panel-analysis" class="legend-panel legend-panel--hidden">
+            <div id="analysis-content" class="analysis-content">
+              <p class="analysis-empty">Load a demo to see analysis.</p>
+            </div>
+          </div>
         </aside>
       </main>
       <p class="hint" id="error" hidden></p>

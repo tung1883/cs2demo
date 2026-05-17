@@ -7,6 +7,7 @@
   --t: #e4a019;
   --ct: #5b8fd8;
   --accent: #3ddc97;
+  --accent2: #7c8cf8;
   font-family: "Segoe UI", system-ui, sans-serif;
 }
 
@@ -22,7 +23,7 @@ body {
 }
 
 #app {
-  max-width: 1200px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 1rem 1.25rem 2rem;
 }
@@ -105,6 +106,10 @@ body {
   border: 1px solid #2a3038;
 }
 
+.playback-bar {
+  margin-top: 0.5rem;
+}
+
 .controls button {
   background: #2a3340;
   color: var(--text);
@@ -122,6 +127,60 @@ body {
 .controls button[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Speed controls */
+.speed-group {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.speed-label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-right: 0.25rem;
+}
+
+.speed-btn {
+  background: #20262e !important;
+  border: 1px solid #3d4756 !important;
+  border-radius: 4px !important;
+  padding: 0.25rem 0.55rem !important;
+  font-size: 0.78rem !important;
+  color: var(--muted) !important;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.speed-btn:hover {
+  background: #2a3340 !important;
+  color: var(--text) !important;
+}
+
+.speed-btn--active {
+  background: #1e3a2f !important;
+  border-color: var(--accent) !important;
+  color: var(--accent) !important;
+}
+
+/* Heatmap player selector */
+.heatmap-player-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.heatmap-player-select {
+  padding: 0.25rem 0.45rem;
+  border-radius: 5px;
+  border: 1px solid #3d4756;
+  background: #1e242c;
+  color: var(--text);
+  font-size: 0.78rem;
+  min-width: 8rem;
 }
 
 .seek {
@@ -212,6 +271,44 @@ body {
   height: 1.5rem;
   background: #3d4756;
   flex-shrink: 0;
+}
+
+/* Legend + tabs */
+.legend-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid #2a3038;
+}
+
+.legend-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  border-radius: 0;
+  transition: color 0.14s, border-color 0.14s;
+}
+
+.legend-tab:hover {
+  color: var(--text);
+}
+
+.legend-tab--active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.legend-panel {
+  display: block;
+}
+
+.legend-panel--hidden {
+  display: none;
 }
 
 .legend-help .legend-note {
@@ -312,6 +409,200 @@ body {
   color: #9aa7b8;
 }
 
+/* Analysis panel */
+.analysis-content {
+  font-size: 0.78rem;
+}
+
+.analysis-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0.5rem 0;
+}
+
+.analysis-player-select {
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #3d4756;
+  background: #1e242c;
+  color: var(--text);
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.analysis-section {
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #1e242c;
+}
+
+.analysis-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.analysis-section-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  margin: 0 0 0.5rem;
+}
+
+.analysis-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.18rem 0;
+  gap: 0.5rem;
+}
+
+.analysis-stat-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.analysis-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.analysis-stat-value--good {
+  color: #6ee8a2;
+}
+
+.analysis-stat-value--warn {
+  color: #f5a623;
+}
+
+.analysis-stat-value--bad {
+  color: #e05555;
+}
+
+.analysis-bar-row {
+  margin: 0.25rem 0;
+}
+
+.analysis-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.73rem;
+  color: var(--muted);
+  margin-bottom: 0.18rem;
+}
+
+.analysis-bar-label span:last-child {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.analysis-bar-track {
+  height: 5px;
+  background: #20262e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.analysis-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent2);
+  transition: width 0.3s ease-out;
+}
+
+.analysis-bar-fill--t {
+  background: var(--t);
+}
+
+.analysis-bar-fill--ct {
+  background: var(--ct);
+}
+
+.analysis-bar-fill--heat {
+  background: linear-gradient(90deg, #5b8fd8, #e4a019, #e05555);
+}
+
+.analysis-insights {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.analysis-insight {
+  padding: 0.35rem 0;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--muted);
+  border-bottom: 1px solid #1a1f26;
+  padding-left: 1rem;
+  position: relative;
+}
+
+.analysis-insight::before {
+  content: "›";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.analysis-insight:last-child {
+  border-bottom: none;
+}
+
+.analysis-team-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+}
+
+.analysis-team-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.timing-bar {
+  display: flex;
+  gap: 2px;
+  height: 16px;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 0.3rem;
+}
+
+.timing-bar-early { background: #e05555; }
+.timing-bar-mid   { background: #f5a623; }
+.timing-bar-late  { background: #5b8fd8; }
+
+.timing-vuln-badge {
+  display: inline-block;
+  margin: 0.22rem 0 0.1rem;
+  padding: 0.22rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.35);
+  color: #f5a623;
+  line-height: 1.3;
+}
+
+.timing-vuln-badge--danger {
+  background: rgba(224, 85, 85, 0.12);
+  border-color: rgba(224, 85, 85, 0.35);
+  color: #e07070;
+}
+
 .stage {
   display: flex;
   flex-wrap: wrap;
@@ -331,12 +622,16 @@ body {
 
 .legend {
   flex: 1;
-  min-width: 200px;
+  min-width: 220px;
+  max-width: 300px;
   background: var(--panel);
   border: 1px solid #2a3038;
   border-radius: 8px;
   padding: 0.75rem 1rem;
   font-size: 0.8rem;
+  max-height: 900px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .legend h2 {

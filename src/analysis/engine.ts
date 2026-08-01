@@ -4,7 +4,7 @@
  */
 import type { DemoData } from "../demoTypes";
 import type { BoundingBox } from "../utils/coords";
-import { MAP_POSITIONS, getPositionName } from "../mapPositions";
+import { MAP_POSITIONS, getPositionName, getFloorLabel, FLOOR_SPLIT_Z } from "../mapPositions";
 
 export type AreaStat = { area: string; ticks: number; pct: number };
 export type WeaponStat = { weapon: string; count: number };
@@ -86,7 +86,12 @@ export type DemoAnalysis = {
   totalRounds: number;
   players: PlayerStats[];
   teams: TeamStats[];
+  /** Alias for `heatmapsDwell`, kept for existing callers. */
   heatmaps: Map<number, HeatmapData>;
+  heatmapsDwell: Map<number, HeatmapData>;
+  heatmapsCoverage: Map<number, HeatmapData>;
+  /** Present only for maps with a configured floor split (`FLOOR_SPLIT_Z`) and demos exported with Z data. */
+  heatmapsByFloor: Map<number, Map<"Upper" | "Lower", HeatmapData>>;
   insights: string[];
 };
 
@@ -116,9 +121,17 @@ function stdDev(vals: number[]): number {
   return Math.sqrt(vals.reduce((s, v) => s + (v - m) ** 2, 0) / vals.length);
 }
 
+export type HeatmapMode = "dwell" | "coverage";
+
+/**
+ * "dwell" = raw per-tick histogram (a player standing still dominates the map).
+ * "coverage" = each (round, cell) counts once, regardless of how long they stood
+ * there — de-duplicated per round so camping doesn't dominate over rotations.
+ */
 function buildHeatmap(
-  positions: [number, number][],
+  positions: [number, number, number, number | null][],
   bbox: BoundingBox,
+  mode: HeatmapMode,
 ): HeatmapData {
   const W = 64;
   const H = 64;
@@ -131,12 +144,18 @@ function buildHeatmap(
   const spanX = worldMaxX - worldMinX || 1;
   const spanY = worldMaxY - worldMinY || 1;
 
-  for (const [x, y] of positions) {
+  const seenCoverageCells = mode === "coverage" ? new Set<string>() : null;
+
+  for (const [x, y, round] of positions) {
     const gx = Math.floor(((x - worldMinX) / spanX) * W);
     const gy = Math.floor(((y - worldMinY) / spanY) * H);
-    if (gx >= 0 && gx < W && gy >= 0 && gy < H) {
-      grid[gy * W + gx] += 1;
+    if (gx < 0 || gx >= W || gy < 0 || gy >= H) continue;
+    if (seenCoverageCells) {
+      const key = `${round}_${gx}_${gy}`;
+      if (seenCoverageCells.has(key)) continue;
+      seenCoverageCells.add(key);
     }
+    grid[gy * W + gx] += 1;
   }
 
   const max = Math.max(...grid);
@@ -161,12 +180,19 @@ export function analyzeDemo(data: DemoData, bbox: BoundingBox): DemoAnalysis {
   // Per-player accumulators
   const playerAreaTicks = new Map<number, Map<string, number>>();
   const playerTotalLiveTicks = new Map<number, number>();
-  const playerPositions = new Map<number, [number, number][]>();
+  const playerPositions = new Map<number, [number, number, number, number | null][]>();
   const playerRoundsActive = new Map<number, Set<number>>();
 
-  for (const [, round, players] of data.frames) {
+  // Skip this long after round-live-start when sampling heatmap positions —
+  // early-round spawn/buy clustering otherwise dominates the map over actual
+  // rotations/duels.
+  const HEATMAP_SKIP_SEC = 20;
+
+  for (const [tick, round, players] of data.frames) {
     const liveTick = roundStartTick.get(round);
     if (liveTick === undefined) continue;
+    const elapsedSec = (tick - liveTick) / tickRate;
+    const pastHeatmapWindow = elapsedSec >= HEATMAP_SKIP_SEC;
 
     for (const pl of players) {
       const idx = Number(pl[0]);
@@ -181,9 +207,12 @@ export function analyzeDemo(data: DemoData, bbox: BoundingBox): DemoAnalysis {
 
       playerTotalLiveTicks.set(idx, (playerTotalLiveTicks.get(idx) ?? 0) + 1);
 
-      const pos = playerPositions.get(idx) ?? [];
-      pos.push([x, y]);
-      playerPositions.set(idx, pos);
+      if (pastHeatmapWindow) {
+        const pos = playerPositions.get(idx) ?? [];
+        const z = pl.length >= 10 ? Number(pl[9]) : null;
+        pos.push([x, y, round, Number.isFinite(z) ? (z as number) : null]);
+        playerPositions.set(idx, pos);
+      }
 
       const rounds = playerRoundsActive.get(idx) ?? new Set<number>();
       rounds.add(round);
@@ -428,9 +457,15 @@ export function analyzeDemo(data: DemoData, bbox: BoundingBox): DemoAnalysis {
       team,
       roundsWon: won,
       roundsLost: lost,
-      bombsPlanted: data.bombPlants?.length ?? 0,
-      bombsDefused: data.bombEnds?.filter((e) => e[1] === "defused").length ?? 0,
-      bombsExploded: data.bombEnds?.filter((e) => e[1] === "exploded").length ?? 0,
+      bombsPlanted: team === 2 ? (data.bombPlants?.length ?? 0) : 0,
+      bombsDefused:
+        team === 3
+          ? (data.bombEnds?.filter((e) => e[1] === "defused").length ?? 0)
+          : 0,
+      bombsExploded:
+        team === 2
+          ? (data.bombEnds?.filter((e) => e[1] === "exploded").length ?? 0)
+          : 0,
       commonAreas,
       firstEngagementAvgSec,
       firstEngagementStdDev,
@@ -438,18 +473,55 @@ export function analyzeDemo(data: DemoData, bbox: BoundingBox): DemoAnalysis {
     };
   });
 
-  // Per-player heatmaps
-  const heatmaps = new Map<number, HeatmapData>();
+  // Per-player heatmaps (both weightings computed eagerly — cheap, 64×64 float grids)
+  const heatmapsDwell = new Map<number, HeatmapData>();
+  const heatmapsCoverage = new Map<number, HeatmapData>();
   for (const p of data.players) {
     const pos = playerPositions.get(p.i);
     if (pos && pos.length > 10) {
-      heatmaps.set(p.i, buildHeatmap(pos, bbox));
+      heatmapsDwell.set(p.i, buildHeatmap(pos, bbox, "dwell"));
+      heatmapsCoverage.set(p.i, buildHeatmap(pos, bbox, "coverage"));
+    }
+  }
+
+  // Per-floor heatmaps — only for maps with a configured split, and only when this
+  // export actually carries Z data (older JSON without it has every z === null).
+  const heatmapsByFloor = new Map<number, Map<"Upper" | "Lower", HeatmapData>>();
+  if (FLOOR_SPLIT_Z[mapName] !== undefined) {
+    for (const p of data.players) {
+      const pos = playerPositions.get(p.i);
+      if (!pos?.length) continue;
+      const byFloor = new Map<"Upper" | "Lower", typeof pos>();
+      for (const row of pos) {
+        const z = row[3];
+        if (z === null) continue;
+        const floor = getFloorLabel(mapName, z);
+        if (!floor) continue;
+        const arr = byFloor.get(floor) ?? [];
+        arr.push(row);
+        byFloor.set(floor, arr);
+      }
+      if (!byFloor.size) continue;
+      const grids = new Map<"Upper" | "Lower", HeatmapData>();
+      for (const [floor, floorPos] of byFloor) {
+        if (floorPos.length > 10) grids.set(floor, buildHeatmap(floorPos, bbox, "dwell"));
+      }
+      if (grids.size) heatmapsByFloor.set(p.i, grids);
     }
   }
 
   const insights = generateInsights(playerStatsList, teamStatsList, totalRounds, data);
 
-  return { totalRounds, players: playerStatsList, teams: teamStatsList, heatmaps, insights };
+  return {
+    totalRounds,
+    players: playerStatsList,
+    teams: teamStatsList,
+    heatmaps: heatmapsDwell,
+    heatmapsDwell,
+    heatmapsCoverage,
+    heatmapsByFloor,
+    insights,
+  };
 }
 
 function sec(s: number): string {
@@ -658,6 +730,8 @@ function generateInsights(
 export function getPlayerHeatmap(
   analysis: DemoAnalysis,
   playerIdx: number,
+  mode: HeatmapMode = "dwell",
 ): HeatmapData | undefined {
-  return analysis.heatmaps.get(playerIdx);
+  const source = mode === "coverage" ? analysis.heatmapsCoverage : analysis.heatmapsDwell;
+  return source.get(playerIdx);
 }

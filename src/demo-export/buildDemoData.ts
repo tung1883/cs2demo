@@ -2,7 +2,8 @@
  * Browser-safe demo → viewer JSON (Uint8Array in / DemoData out).
  * Mirrors scripts/demo-buffer-to-json.mjs for WASM bindings (no Buffer / no NAPI-only APIs).
  */
-import type { DemoData, KillTuple, PlayerMeta, RoundResultTuple } from "../demoTypes";
+import type { DamageTuple, DemoData, KillTuple, PlayerMeta, RoundResultTuple } from "../demoTypes";
+import { MAX_BLIND_DURATION_SEC } from "../utils/flash.ts";
 
 export type ExportProgressEvent = {
   phase: string;
@@ -45,6 +46,7 @@ type TickRow = {
   steamid?: unknown;
   X?: number;
   Y?: number;
+  Z?: number;
   yaw?: unknown;
   team_num?: unknown;
   is_alive?: unknown;
@@ -78,6 +80,7 @@ type DemoEvent = Record<string, unknown> & {
   headshot?: unknown;
   winner?: unknown;
   reason?: unknown;
+  dmg_health?: unknown;
 };
 
 /** Loose tuple builder for shots/utilities before casting to DemoData */
@@ -422,6 +425,7 @@ export async function buildDemoData(
   const BASE_TICK_PROPS = [
     "X",
     "Y",
+    "Z",
     "yaw",
     "team_num",
     "is_alive",
@@ -523,6 +527,7 @@ export async function buildDemoData(
     const utils = packUtilityLabels(row);
     const hasBomb = inventoryHasC4(row.inventory) ? 1 : 0;
 
+    const sz = row.Z;
     frame.players.push([
       idx,
       sx!,
@@ -533,6 +538,7 @@ export async function buildDemoData(
       gun,
       utils,
       hasBomb,
+      Number.isFinite(sz) ? sz! : 0,
     ]);
     if (row.total_rounds_played != null) {
       frame.round = Number(row.total_rounds_played);
@@ -590,9 +596,17 @@ export async function buildDemoData(
         "bomb_dropped",
         "bomb_pickup",
         "player_death",
+        "player_hurt",
       ],
       ["X", "Y", "yaw", "pitch"],
-      ["attacker_steamid", "weapon", "headshot"],
+      [
+        "attacker_steamid",
+        "weapon",
+        "headshot",
+        "total_rounds_played",
+        "blind_duration",
+        "dmg_health",
+      ],
     ) as DemoEvent[];
   } catch {
     gameplayEvs = [];
@@ -609,6 +623,7 @@ export async function buildDemoData(
   const bombDrops: [number, number, number][] = [];
   const bombPickupTicks: number[] = [];
   const kills: KillTuple[] = [];
+  const damages: DamageTuple[] = [];
 
   for (const ev of gameplayEvs) {
     const en = ev.event_name;
@@ -712,10 +727,29 @@ export async function buildDemoData(
         ]);
         break;
       }
+      case "player_hurt": {
+        const victimIdx = steamToIdx[String(ev.user_steamid)];
+        if (victimIdx === undefined) break;
+        const attackerSid = ev.attacker_steamid;
+        const attackerIdx =
+          attackerSid !== undefined && attackerSid !== null
+            ? (steamToIdx[String(attackerSid)] ?? -1)
+            : -1;
+        const dmg =
+          typeof ev.dmg_health === "number" && Number.isFinite(ev.dmg_health)
+            ? ev.dmg_health
+            : Number(ev.dmg_health ?? 0);
+        if (!Number.isFinite(dmg) || dmg <= 0) break;
+        const weapon = shortenWeapon(ev.weapon ?? "unknown");
+        const roundNum = Number(ev.total_rounds_played ?? 0);
+        damages.push([Number(ev.tick), roundNum, attackerIdx, victimIdx, weapon, dmg]);
+        break;
+      }
       default:
         break;
     }
   }
+  damages.sort((a, b) => a[0] - b[0]);
   kills.sort((a, b) => a[0] - b[0]);
 
   sortByTick(smokePops);
@@ -740,7 +774,10 @@ export async function buildDemoData(
       typeof b.blind_duration === "number" &&
       Number.isFinite(b.blind_duration)
     ) {
-      amt = Math.min(1, Math.max(0, Number(b.blind_duration) / 255));
+      amt = Math.min(
+        1,
+        Math.max(0, Number(b.blind_duration) / MAX_BLIND_DURATION_SEC),
+      );
     } else if (
       typeof b.blind_percentage === "number" &&
       Number.isFinite(b.blind_percentage)
@@ -810,16 +847,17 @@ export async function buildDemoData(
     .map((e): RoundResultTuple | null => {
       const t = e.tick;
       if (!Number.isFinite(t)) return null;
-      const rn = typeof e.total_rounds_played === "number" ? Math.trunc(e.total_rounds_played) : -1;
+      // round_end's total_rounds_played already counts the just-finished round (post-increment),
+      // one ahead of kills/frames' still-in-progress numbering — subtract 1 to align.
+      const rn =
+        typeof e.total_rounds_played === "number"
+          ? Math.trunc(e.total_rounds_played) - 1
+          : -1;
       if (rn < 0) return null;
-      const winner =
-        typeof e.winner === "number" && Number.isFinite(e.winner)
-          ? Math.trunc(e.winner)
-          : 0;
-      const reason =
-        typeof e.reason === "number" && Number.isFinite(e.reason)
-          ? Math.trunc(e.reason)
-          : 0;
+      // demoparser2 returns winner/reason as strings ("CT"/"T", "bomb_defused"/…), not numbers.
+      const winnerRaw = typeof e.winner === "string" ? e.winner.toUpperCase() : "";
+      const winner = winnerRaw === "T" ? 2 : winnerRaw === "CT" ? 3 : 0;
+      const reason = typeof e.reason === "string" ? e.reason : "";
       return [Number(t), rn, winner, reason];
     })
     .filter((x): x is RoundResultTuple => x !== null)
@@ -847,5 +885,6 @@ export async function buildDemoData(
     roundEndsHud,
     kills: kills as DemoData["kills"],
     roundResults: roundResults as DemoData["roundResults"],
+    damages,
   };
 }

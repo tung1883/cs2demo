@@ -27,9 +27,19 @@
             <span>JSON file</span>
             <input type="file" id="demo-file-input" accept="application/json,.json" />
           </label>
+          <span class="demo-source-divider" aria-hidden="true"></span>
+          <button type="button" id="session-export-btn">Export session</button>
+          <label class="demo-file">
+            <span>Import session</span>
+            <input type="file" id="session-import-input" accept="application/json,.json" />
+          </label>
         </div>
         <div class="meta" id="meta">
           Choose a .dem (exported in-browser via WASM; <code>npm run dev</code> adds a faster native fallback), bundled JSON, or export file.
+        </div>
+        <div class="recent-demos" id="recent-demos-wrap" hidden>
+          <span class="recent-demos-label">Recent:</span>
+          <div id="recent-demos-list" class="recent-demos-list"></div>
         </div>
         <div id="export-progress" class="export-progress" hidden aria-live="polite">
           <div class="export-progress-track">
@@ -45,6 +55,10 @@
             <button type="button" class="speed-btn speed-btn--active" data-speed="1">1×</button>
             <button type="button" class="speed-btn" data-speed="2">2×</button>
             <button type="button" class="speed-btn" data-speed="4">4×</button>
+          </div>
+          <div class="round-nav">
+            <button type="button" id="prev-round" title="Previous round">‹ Round</button>
+            <button type="button" id="next-round" title="Next round">Round ›</button>
           </div>
           <label class="seek">
             <span>Tick</span>
@@ -72,18 +86,90 @@
             <input type="checkbox" id="show-heatmap" />
             <span>Heatmap</span>
           </label>
+          <label class="toggle">
+            <input type="checkbox" id="skip-freeze" />
+            <span>Skip freeze</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="auto-advance" />
+            <span>Auto-advance</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="auto-zoom" />
+            <span>Auto-zoom</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="perf-mode" />
+            <span>Performance mode</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="follow-mode" />
+            <span>Follow</span>
+          </label>
+          <label class="heatmap-player-wrap" id="follow-player-wrap" hidden>
+            <span>Player</span>
+            <select id="follow-player-select" class="heatmap-player-select"></select>
+          </label>
           <label class="heatmap-player-wrap">
             <span>Player</span>
             <select id="heatmap-player-select" class="heatmap-player-select"></select>
           </label>
+          <label class="heatmap-player-wrap">
+            <span>Weight</span>
+            <select id="heatmap-weight-select" class="heatmap-player-select">
+              <option value="dwell">Dwell time</option>
+              <option value="coverage">Coverage</option>
+            </select>
+          </label>
+          <label class="heatmap-player-wrap" id="heatmap-floor-wrap" hidden>
+            <span>Floor</span>
+            <select id="heatmap-floor-select" class="heatmap-player-select">
+              <option value="all">Both</option>
+              <option value="Upper">Upper</option>
+              <option value="Lower">Lower</option>
+            </select>
+          </label>
+        </div>
+        <div class="controls coach-toolbar" id="coach-toolbar">
+          <label class="toggle">
+            <input type="checkbox" id="coach-mode" />
+            <span>Coach mode</span>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="comment-mode" />
+            <span>Comment mode</span>
+          </label>
+          <div class="coach-tools" id="coach-tools" hidden>
+            <button type="button" class="tool-btn tool-btn--active" data-tool="select">Select</button>
+            <button type="button" class="tool-btn" data-tool="rect">Rect</button>
+            <button type="button" class="tool-btn" data-tool="circle">Circle</button>
+            <button type="button" class="tool-btn" data-tool="arrow">Arrow</button>
+            <button type="button" class="tool-btn" data-tool="path">Path</button>
+            <button type="button" class="tool-btn" data-tool="grenade-path">Grenade</button>
+            <input type="color" id="coach-color" value="#3ddc97" title="Stroke color" />
+            <label class="coach-thickness">
+              <span>Width</span>
+              <input type="range" id="coach-thickness" min="1" max="8" value="3" />
+            </label>
+            <button type="button" id="coach-undo">Undo</button>
+            <button type="button" id="coach-redo">Redo</button>
+            <button type="button" id="coach-clear">Clear round</button>
+          </div>
         </div>
       </header>
       <main class="stage">
-        <canvas id="viewport" width="900" height="900"></canvas>
+        <div class="canvas-stack">
+          <canvas id="viewport" width="900" height="900"></canvas>
+          <canvas id="coach-overlay" width="900" height="900"></canvas>
+        </div>
         <aside class="legend" id="legend">
           <div class="legend-tabs" role="tablist">
             <button class="legend-tab legend-tab--active" role="tab" aria-selected="true" data-tab="live" id="tab-live">Live</button>
             <button class="legend-tab" role="tab" aria-selected="false" data-tab="analysis" id="tab-analysis">Analysis</button>
+            <button class="legend-tab" role="tab" aria-selected="false" data-tab="duels" id="tab-duels">Duels</button>
+            <button class="legend-tab" role="tab" aria-selected="false" data-tab="economy" id="tab-economy">Economy</button>
+            <button class="legend-tab" role="tab" aria-selected="false" data-tab="utilities" id="tab-utilities">Utilities</button>
+            <button class="legend-tab" role="tab" aria-selected="false" data-tab="comments" id="tab-comments">Comments</button>
           </div>
           <div id="panel-live" class="legend-panel">
             <div id="legend-help" class="legend-help"></div>
@@ -92,6 +178,26 @@
           <div id="panel-analysis" class="legend-panel legend-panel--hidden">
             <div id="analysis-content" class="analysis-content">
               <p class="analysis-empty">Load a demo to see analysis.</p>
+            </div>
+          </div>
+          <div id="panel-duels" class="legend-panel legend-panel--hidden">
+            <div id="duels-content" class="analysis-content">
+              <p class="analysis-empty">Load a demo to see duel stats.</p>
+            </div>
+          </div>
+          <div id="panel-economy" class="legend-panel legend-panel--hidden">
+            <div id="economy-content" class="analysis-content">
+              <p class="analysis-empty">Load a demo to see economy stats.</p>
+            </div>
+          </div>
+          <div id="panel-utilities" class="legend-panel legend-panel--hidden">
+            <div id="utilities-content" class="analysis-content">
+              <p class="analysis-empty">Load a demo to see utility stats.</p>
+            </div>
+          </div>
+          <div id="panel-comments" class="legend-panel legend-panel--hidden">
+            <div id="comments-content" class="analysis-content">
+              <p class="analysis-empty">Load a demo to add comments.</p>
             </div>
           </div>
         </aside>

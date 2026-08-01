@@ -1,5 +1,4 @@
-- bugs list:
-1. round time is not correct
+- bugs list: (none known — see git history for recent fixes)
 
 - features to be added:
 1. change UI of bomb

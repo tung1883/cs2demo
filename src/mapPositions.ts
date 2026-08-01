@@ -169,6 +169,21 @@ export const MAP_POSITIONS: Record<string, NamedArea[]> = {
 };
 
 /**
+ * World-Z split point for two-floor maps: below the value = lower level, at/above = upper level.
+ * Approximate, not calibrated against a real demo — treat as a starting point, adjust per-map
+ * once real Z samples are available (e.g. from `getFloorLabel` output while scrubbing a de_nuke replay).
+ */
+export const FLOOR_SPLIT_Z: Record<string, number> = {
+  de_nuke: -300,
+};
+
+export function getFloorLabel(mapName: string, z: number): "Upper" | "Lower" | null {
+  const splitZ = FLOOR_SPLIT_Z[mapName];
+  if (splitZ === undefined) return null;
+  return z >= splitZ ? "Upper" : "Lower";
+}
+
+/**
  * Returns the most-specific (smallest area) named area for world position (x, y) on the given map.
  */
 export function getPositionName(

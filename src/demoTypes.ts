@@ -8,6 +8,8 @@ export type PlayerMeta = {
  * Per-frame player sample.
  * Legacy: [idx, x, y, yaw, team]
  * Extended: + balance (-1 unknown), gun slug, utils label, hasBomb (0|1) when exporter adds economy/C4.
+ * Extended further: + Z world height (index 9) when exporter adds floor support — rows shorter
+ * than 10 elements predate this and should be treated as "no floor data" (single-level heatmap only).
  */
 export type FramePlayerRow = (number | string)[];
 /** [tick, round, players[]] */
@@ -39,8 +41,14 @@ export type FlashVictimTuple = [number, number, number];
  */
 export type KillTuple = [number, number, number, number, string, number, number, number];
 
-/** round_end: [tick, round, winnerTeam(2=T|3=CT), reasonCode] */
-export type RoundResultTuple = [number, number, number, number];
+/** round_end: [tick, round, winnerTeam(2=T|3=CT|0=unknown), reason (e.g. "bomb_defused"/"t_killed"/"ct_killed"/"time_ran_out"; "" unknown)] */
+export type RoundResultTuple = [number, number, number, string];
+
+/**
+ * player_hurt: [tick, round, attackerIdx(-1=world/unknown), victimIdx, weapon, dmgHealth]
+ * Zero/negative damage rows are dropped at export.
+ */
+export type DamageTuple = [number, number, number, number, string, number];
 
 /** Demo tick when live round clock starts (`round_freeze_end`, paired with `round_start` in export); matches `Frame[1]` */
 export type RoundClockStartTuple = [number, number];
@@ -79,4 +87,6 @@ export type DemoData = {
   kills?: KillTuple[];
   /** Round outcomes from round_end — re-export to populate */
   roundResults?: RoundResultTuple[];
+  /** Damage events from player_hurt — re-export to populate; HE/molotov damage stats degrade to an empty state without it */
+  damages?: DamageTuple[];
 };

@@ -23,7 +23,24 @@ import {
 } from "./utils/overviewTransform";
 import { formatTime } from "./utils/time";
 import { getPositionName } from "./mapPositions";
-import { analyzeDemo, type DemoAnalysis } from "./analysis/engine";
+import { analyzeDemo, type DemoAnalysis, type HeatmapData } from "./analysis/engine";
+import { computeEffectiveBBox, type ViewportMode } from "./utils/viewport";
+import { CoachStore, type CoachTool } from "./coach/coachTools";
+import { renderCoachOverlay } from "./coach/coachRenderer";
+import { CoachInput } from "./coach/coachInput";
+import { CommentStore } from "./comments/commentStore";
+import { COMMENT_KIND_COLOR, COMMENT_KIND_LABEL, type Comment, type CommentKind } from "./comments/commentTypes";
+import { downloadSessionEnvelope, importSessionFile } from "./session/sessionIO";
+import type { SessionEnvelope } from "./session/sessionFormat";
+import { loadRecentDemos, saveRecentDemo } from "./library/recentDemos";
+import { buildDuelMatrix, buildOpeningDuelStats } from "./analysis/duels";
+import { buildEconomyReport, summarizeByBuyType } from "./analysis/economy";
+import {
+  buildThrowStats,
+  buildFlashStats,
+  buildFlashImpact,
+  buildDamageStats,
+} from "./analysis/utilities";
 
 const defaultBBox: BoundingBox = {
   minX: -2500,
@@ -35,6 +52,8 @@ const defaultBBox: BoundingBox = {
 
 const canvas = document.getElementById("viewport") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+const coachOverlay = document.getElementById("coach-overlay") as HTMLCanvasElement;
+const coachCtx = coachOverlay.getContext("2d")!;
 const scrub = document.getElementById("scrub") as HTMLInputElement;
 const playBtn = document.getElementById("play") as HTMLButtonElement;
 const metaEl = document.getElementById("meta")!;
@@ -53,17 +72,72 @@ const showUtilitiesEl = document.getElementById("show-utilities") as HTMLInputEl
 const showEffectsEl = document.getElementById("show-effects") as HTMLInputElement;
 const showPositionsEl = document.getElementById("show-positions") as HTMLInputElement;
 const showHeatmapEl = document.getElementById("show-heatmap") as HTMLInputElement;
+const skipFreezeEl = document.getElementById("skip-freeze") as HTMLInputElement;
+const autoAdvanceEl = document.getElementById("auto-advance") as HTMLInputElement;
+const autoZoomEl = document.getElementById("auto-zoom") as HTMLInputElement;
+const perfModeEl = document.getElementById("perf-mode") as HTMLInputElement;
+const followModeEl = document.getElementById("follow-mode") as HTMLInputElement;
+const followPlayerWrapEl = document.getElementById("follow-player-wrap") as HTMLLabelElement;
+const followPlayerSelectEl = document.getElementById("follow-player-select") as HTMLSelectElement;
+const prevRoundBtn = document.getElementById("prev-round") as HTMLButtonElement;
+const nextRoundBtn = document.getElementById("next-round") as HTMLButtonElement;
+const coachModeEl = document.getElementById("coach-mode") as HTMLInputElement;
+const commentModeEl = document.getElementById("comment-mode") as HTMLInputElement;
+const coachToolsEl = document.getElementById("coach-tools") as HTMLDivElement;
+const coachColorEl = document.getElementById("coach-color") as HTMLInputElement;
+const coachThicknessEl = document.getElementById("coach-thickness") as HTMLInputElement;
+const coachUndoBtn = document.getElementById("coach-undo") as HTMLButtonElement;
+const coachRedoBtn = document.getElementById("coach-redo") as HTMLButtonElement;
+const coachClearBtn = document.getElementById("coach-clear") as HTMLButtonElement;
+const toolBtns = document.querySelectorAll<HTMLButtonElement>(".tool-btn");
 const heatmapPlayerSelectEl = document.getElementById("heatmap-player-select") as HTMLSelectElement;
+const heatmapWeightSelectEl = document.getElementById("heatmap-weight-select") as HTMLSelectElement;
+const heatmapFloorWrapEl = document.getElementById("heatmap-floor-wrap") as HTMLLabelElement;
+const heatmapFloorSelectEl = document.getElementById("heatmap-floor-select") as HTMLSelectElement;
 const demoUrlSelect = document.getElementById("demo-url-select") as HTMLSelectElement;
 const demoLoadUrlBtn = document.getElementById("demo-load-url") as HTMLButtonElement;
 const demoFileInput = document.getElementById("demo-file-input") as HTMLInputElement;
+const sessionExportBtn = document.getElementById("session-export-btn") as HTMLButtonElement;
+const sessionImportInput = document.getElementById("session-import-input") as HTMLInputElement;
+const recentDemosWrapEl = document.getElementById("recent-demos-wrap") as HTMLDivElement;
+const recentDemosListEl = document.getElementById("recent-demos-list") as HTMLDivElement;
 const demoDemInput = document.getElementById("demo-dem-input") as HTMLInputElement;
 const demoExportDemBtn = document.getElementById("demo-export-dem") as HTMLButtonElement;
 const analysisContentEl = document.getElementById("analysis-content")!;
+const duelsContentEl = document.getElementById("duels-content")!;
+const economyContentEl = document.getElementById("economy-content")!;
+const utilitiesContentEl = document.getElementById("utilities-content")!;
+const commentsContentEl = document.getElementById("comments-content")!;
 const speedBtns = document.querySelectorAll<HTMLButtonElement>(".speed-btn");
 const tabBtns = document.querySelectorAll<HTMLButtonElement>(".legend-tab");
 const panelLive = document.getElementById("panel-live")!;
 const panelAnalysis = document.getElementById("panel-analysis")!;
+const tabPanels: Record<string, HTMLElement> = {
+  live: panelLive,
+  analysis: panelAnalysis,
+  duels: document.getElementById("panel-duels")!,
+  economy: document.getElementById("panel-economy")!,
+  utilities: document.getElementById("panel-utilities")!,
+  comments: document.getElementById("panel-comments")!,
+};
+/** Per-tab (re)build hooks — populated by each feature as it's wired up. */
+const tabOnActivate: Record<string, () => void> = {
+  analysis: () => {
+    if (analysis) buildAnalysisPanel();
+  },
+  duels: () => {
+    if (data) buildDuelsPanel();
+  },
+  economy: () => {
+    if (data) buildEconomyPanel();
+  },
+  utilities: () => {
+    if (data) buildUtilitiesPanel();
+  },
+  comments: () => {
+    buildCommentsPanel();
+  },
+};
 
 let data: DemoData | null = null;
 let frameIndex = 0;
@@ -74,6 +148,15 @@ let playAccum = 0;
 let playSpeed = 1;
 let analysis: DemoAnalysis | null = null;
 let analysisPlayerIdx = -1;
+let duelsIgnoreTraded = false;
+let utilitiesSubTab: "throws" | "flashes" | "damage" = "throws";
+let perfMode = false;
+let skipFreezeOnRoundNav = false;
+let autoAdvance = false;
+let lastAutoAdvanceRound = -1;
+const coachStore = new CoachStore();
+const commentStore = new CommentStore();
+let pendingComment: { tick: number; round: number; x: number; y: number } | null = null;
 
 function stopPlayback(): void {
   playing = false;
@@ -85,10 +168,40 @@ function stopPlayback(): void {
 }
 
 let bbox: BoundingBox = defaultBBox;
+let viewportMode: ViewportMode = { kind: "fixed" };
+/** Recomputed once per render() call; consulted by worldXYToCanvas/worldRadiusToCanvasPx/drawMapLayout. */
+let activeViewportBBox: BoundingBox = defaultBBox;
 
 /** Loaded square overview PNG + matching geometry from `src/mapOverview.ts` */
 let overviewCfg: MapOverviewConfig | undefined;
 let overviewImage: HTMLImageElement | null = null;
+
+/**
+ * Dropped-bomb marker icon: `public/bomb_c4.svg` (already a flat, solid-white
+ * glyph on a transparent background) tinted to the marker's amber color once
+ * at load. Falls back to the previous drawn diamond if the image is missing.
+ */
+let c4Icon: HTMLCanvasElement | null = null;
+(() => {
+  const img = new Image();
+  img.onload = () => {
+    if (!(img.naturalWidth > 0)) return;
+    const SIZE = 32;
+    const out = document.createElement("canvas");
+    out.width = SIZE;
+    out.height = SIZE;
+    const octx = out.getContext("2d");
+    if (!octx) return;
+    octx.drawImage(img, 0, 0, SIZE, SIZE);
+    // Recolor the opaque glyph pixels to the marker's amber (keeps the SVG's alpha shape).
+    octx.globalCompositeOperation = "source-in";
+    octx.fillStyle = "#ffba48";
+    octx.fillRect(0, 0, SIZE, SIZE);
+    c4Icon = out;
+  };
+  img.onerror = () => {};
+  img.src = "/bomb_c4.svg";
+})();
 
 function teamColor(team: number): string {
   if (team === 2) return "#e4a019";
@@ -106,6 +219,8 @@ function parseFramePlayer(pl: FramePlayerRow): {
   gun: string | undefined;
   utils: string | undefined;
   hasBomb: boolean;
+  /** World height — `undefined` on rows exported before floor support (length < 10). */
+  z: number | undefined;
 } {
   const idx = Number(pl[0]);
   const x = Number(pl[1]);
@@ -116,6 +231,7 @@ function parseFramePlayer(pl: FramePlayerRow): {
   let gun: string | undefined;
   let utils: string | undefined;
   let hasBomb = false;
+  let z: number | undefined;
   if (pl.length >= 8) {
     const bRaw = pl[5];
     const b =
@@ -129,7 +245,11 @@ function parseFramePlayer(pl: FramePlayerRow): {
     utils = u.trim() ? u : undefined;
   }
   if (pl.length >= 9 && Number(pl[8]) === 1) hasBomb = true;
-  return { idx, x, y, yaw, team, balance, gun, utils, hasBomb };
+  if (pl.length >= 10) {
+    const zRaw = Number(pl[9]);
+    z = Number.isFinite(zRaw) ? zRaw : undefined;
+  }
+  return { idx, x, y, yaw, team, balance, gun, utils, hasBomb, z };
 }
 
 function formatMoney(n: number): string {
@@ -285,13 +405,66 @@ function usingOverview(): boolean {
   return !!(overviewCfg && overviewImage);
 }
 
+/**
+ * Overview-image source crop rect (in overview-pixel space) for the active
+ * viewport. Fixed mode returns the full image — identical to the pre-zoom
+ * behavior. Zoomed modes crop to `activeViewportBBox`'s world-space window.
+ */
+function getOverviewCropRect(cfg: MapOverviewConfig): {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+} {
+  const n = cfg.overviewPx || 1024;
+  if (viewportMode.kind === "fixed") {
+    return { sx: 0, sy: 0, sw: n, sh: n };
+  }
+  const b = activeViewportBBox;
+  const a = worldToOverviewPixel(b.minX - b.pad, b.maxY + b.pad, cfg);
+  const c = worldToOverviewPixel(b.maxX + b.pad, b.minY - b.pad, cfg);
+  const sx = Math.min(a.px, c.px);
+  const sy = Math.min(a.py, c.py);
+  const sw = Math.max(Math.abs(c.px - a.px), 1);
+  const sh = Math.max(Math.abs(c.py - a.py), 1);
+  return { sx, sy, sw, sh };
+}
+
 function worldXYToCanvas(wx: number, wy: number): { x: number; y: number } {
   if (usingOverview()) {
     const cfg = overviewCfg!;
     const { px, py } = worldToOverviewPixel(wx, wy, cfg);
-    return overviewPixelToCanvas(px, py, cfg, canvas.width, canvas.height);
+    const { sx, sy, sw, sh } = getOverviewCropRect(cfg);
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const side = Math.min(cw, ch);
+    const ox = (cw - side) / 2;
+    const oy = (ch - side) / 2;
+    return { x: ox + ((px - sx) / sw) * side, y: oy + ((py - sy) / sh) * side };
   }
-  return worldToCanvasBBox(wx, wy, bbox, canvas.width, canvas.height);
+  return worldToCanvasBBox(wx, wy, activeViewportBBox, canvas.width, canvas.height);
+}
+
+/** Inverse of `worldXYToCanvas` — canvas pixel → world XY, for coach/comment click placement. */
+function canvasToWorldXY(cx: number, cy: number): { x: number; y: number } {
+  if (usingOverview()) {
+    const cfg = overviewCfg!;
+    const { sx, sy, sw, sh } = getOverviewCropRect(cfg);
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const side = Math.min(cw, ch);
+    const ox = (cw - side) / 2;
+    const oy = (ch - side) / 2;
+    const px = sx + ((cx - ox) / side) * sw;
+    const py = sy + ((cy - oy) / side) * sh;
+    return { x: px * cfg.scale + cfg.posX, y: cfg.posY - py * cfg.scale };
+  }
+  const b = activeViewportBBox;
+  const spanX = b.maxX - b.minX + b.pad * 2 || 1;
+  const spanY = b.maxY - b.minY + b.pad * 2 || 1;
+  const nx = cx / canvas.width;
+  const ny = (canvas.height - cy) / canvas.height;
+  return { x: nx * spanX + b.minX - b.pad, y: ny * spanY + b.minY - b.pad };
 }
 
 /** Approximate canvas pixels per world unit for circular FX. */
@@ -299,12 +472,12 @@ function worldRadiusToCanvasPx(rWorld: number): number {
   const cw = canvas.width;
   const ch = canvas.height;
   if (usingOverview() && overviewCfg) {
-    const n = overviewCfg.overviewPx || 1024;
     const side = Math.min(cw, ch);
-    return (rWorld / overviewCfg.scale) * (side / n);
+    const { sw, sh } = getOverviewCropRect(overviewCfg);
+    return (rWorld / overviewCfg.scale) * (side / ((sw + sh) / 2));
   }
-  const sx = bbox.maxX - bbox.minX + 2 * bbox.pad;
-  const sy = bbox.maxY - bbox.minY + 2 * bbox.pad;
+  const sx = activeViewportBBox.maxX - activeViewportBBox.minX + 2 * activeViewportBBox.pad;
+  const sy = activeViewportBBox.maxY - activeViewportBBox.minY + 2 * activeViewportBBox.pad;
   const pxPerWu = 0.5 * (cw / sx + ch / sy);
   return rWorld * pxPerWu;
 }
@@ -485,7 +658,18 @@ function drawMapLayout(): void {
     ctx.fillStyle = "#0a0c0f";
     ctx.fillRect(0, 0, cw, ch);
     const ref = overviewPixelToCanvas(0, 0, overviewCfg, cw, ch);
-    ctx.drawImage(overviewImage, ref.ox, ref.oy, ref.side, ref.side);
+    const crop = getOverviewCropRect(overviewCfg);
+    ctx.drawImage(
+      overviewImage,
+      crop.sx,
+      crop.sy,
+      crop.sw,
+      crop.sh,
+      ref.ox,
+      ref.oy,
+      ref.side,
+      ref.side,
+    );
     ctx.strokeStyle = "rgba(61,220,151,0.55)";
     ctx.lineWidth = 2;
     ctx.strokeRect(ref.ox + 1, ref.oy + 1, ref.side - 2, ref.side - 2);
@@ -627,6 +811,16 @@ function drawSmokeCountdownDisk(
   ctx.restore();
 }
 
+/** Performance mode: skip radial-gradient FX for HE/flash/molotov in favor of a flat disk. */
+function drawFlatCircle(cx: number, cy: number, r: number, color: string, alpha: number): void {
+  ctx.save();
+  ctx.fillStyle = color.replace("ALPHA", alpha.toFixed(2));
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawGrenadeFxLayer(frameTick: number): void {
   if (!data || !showEffectsEl.checked) return;
   const tr = data.tickRate;
@@ -661,6 +855,10 @@ function drawGrenadeFxLayer(frameTick: number): void {
   sweep(data.hePops, Math.ceil(tr * 0.65), (wx, wy, u, _age, _detTick) => {
     const c = worldXYToCanvas(wx, wy);
     const radPx = worldRadiusToCanvasPx(78) * (0.55 + 0.45 * u);
+    if (perfMode) {
+      drawFlatCircle(c.x, c.y, radPx, "rgba(255,115,48,ALPHA)", 0.22 * u);
+      return;
+    }
     ctx.save();
     ctx.strokeStyle = `rgba(255,150,72,${0.42 * u})`;
     ctx.lineWidth = 2;
@@ -675,6 +873,10 @@ function drawGrenadeFxLayer(frameTick: number): void {
   sweep(data.flashPops, Math.ceil(tr * 0.42), (wx, wy, u, _age, _detTick) => {
     const c = worldXYToCanvas(wx, wy);
     const radPx = worldRadiusToCanvasPx(42) * (0.5 + 0.5 * u);
+    if (perfMode) {
+      drawFlatCircle(c.x, c.y, radPx * 1.35, "rgba(255,238,160,ALPHA)", 0.22 * u);
+      return;
+    }
     ctx.save();
     const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radPx * 1.35);
     g.addColorStop(0, `rgba(255,252,230,${0.32 * u})`);
@@ -690,6 +892,10 @@ function drawGrenadeFxLayer(frameTick: number): void {
   sweep(data.molotovPools, Math.ceil(tr * 7.5), (wx, wy, u, _age, _detTick) => {
     const c = worldXYToCanvas(wx, wy);
     const radPx = worldRadiusToCanvasPx(68) * (0.65 + 0.35 * Math.sqrt(u));
+    if (perfMode) {
+      drawFlatCircle(c.x, c.y, radPx, "rgba(255,82,28,ALPHA)", 0.15);
+      return;
+    }
     ctx.save();
     const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radPx);
     g.addColorStop(0, `rgba(255,132,48,${0.16 * u})`);
@@ -842,26 +1048,38 @@ function drawBombLayer(frame: Frame | undefined): void {
   if (!dropped) return;
   const [, dx, dy] = dropped;
   const c = worldXYToCanvas(dx, dy);
-  const s = 10;
   ctx.save();
-  ctx.fillStyle = "rgba(255,186,72,0.95)";
-  ctx.strokeStyle = "rgba(42,28,8,0.92)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(c.x, c.y - s);
-  ctx.lineTo(c.x + s, c.y);
-  ctx.lineTo(c.x, c.y + s);
-  ctx.lineTo(c.x - s, c.y);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  if (c4Icon) {
+    const s = 18;
+    ctx.drawImage(c4Icon, c.x - s / 2, c.y - s / 2, s, s);
+  } else {
+    const s = 10;
+    ctx.fillStyle = "rgba(255,186,72,0.95)";
+    ctx.strokeStyle = "rgba(42,28,8,0.92)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y - s);
+    ctx.lineTo(c.x + s, c.y);
+    ctx.lineTo(c.x, c.y + s);
+    ctx.lineTo(c.x - s, c.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
 function drawHeatmapOverlay(): void {
   if (!showHeatmapEl.checked || !analysis) return;
   const pidx = analysisPlayerIdx;
-  const hm = pidx >= 0 ? analysis.heatmaps.get(pidx) : undefined;
+  const floor = heatmapFloorSelectEl.value;
+  let hm: HeatmapData | undefined;
+  if ((floor === "Upper" || floor === "Lower") && pidx >= 0) {
+    hm = analysis.heatmapsByFloor.get(pidx)?.get(floor);
+  } else {
+    const source = heatmapWeightSelectEl.value === "coverage" ? analysis.heatmapsCoverage : analysis.heatmapsDwell;
+    hm = pidx >= 0 ? source.get(pidx) : undefined;
+  }
   if (!hm) return;
 
   const W = hm.gridW;
@@ -1033,7 +1251,8 @@ function updateReadout(): void {
         : "";
   const t = tick / data.tickRate;
   const roundLeft = roundRemainingSeconds(frameIndex);
-  timeReadout.textContent = `Round ${displayRound} · ${formatTime(roundLeft)} left${betweenNote} · tick ${tick} · demo ${formatTime(t)}`;
+  // total_rounds_played is 0-indexed (rounds completed so far); humans count rounds from 1.
+  timeReadout.textContent = `Round ${displayRound + 1} · ${formatTime(roundLeft)} left${betweenNote} · tick ${tick} · demo ${formatTime(t)}`;
 }
 
 function render(): void {
@@ -1053,10 +1272,20 @@ function render(): void {
     legendRosterEl.innerHTML = "";
     return;
   }
+  activeViewportBBox = computeEffectiveBBox(viewportMode, data, frameIndex, bbox);
   drawFrame(data.frames[frameIndex]);
   updateReadout();
   updateBombHud(data.frames[frameIndex]);
   updateLegendRoster(data.frames[frameIndex]);
+  renderCoachAndComments();
+}
+
+function renderCoachAndComments(): void {
+  const round = data?.frames.length ? data.frames[frameIndex][1] : 0;
+  const drawings = coachStore.forRound(round);
+  const preview = coachInput?.currentPreview ?? null;
+  renderCoachOverlay(coachCtx, coachOverlay.width, coachOverlay.height, drawings, worldXYToCanvas, preview);
+  renderCommentMarkers(round);
 }
 
 function buildLegend(): void {
@@ -1290,17 +1519,389 @@ function buildAnalysisPanel(): void {
   }
 }
 
-function updateHeatmapPlayerSelect(): void {
+function buildDuelsPanel(): void {
   if (!data) {
-    heatmapPlayerSelectEl.innerHTML = '<option value="-1">All</option>';
+    duelsContentEl.innerHTML = '<p class="analysis-empty">Load a demo to see duel stats.</p>';
     return;
   }
-  const parts: string[] = ['<option value="-1">All</option>'];
+  if (!data.kills?.length) {
+    duelsContentEl.innerHTML =
+      '<p class="analysis-empty">No kill data in this demo — re-export to enable duel stats.</p>';
+    return;
+  }
+
+  const parts: string[] = [];
+
+  // Duel matrix
+  const matrix = buildDuelMatrix(data);
+  const players = data.players;
+  const countOf = new Map<string, number>();
+  for (const c of matrix) countOf.set(`${c.killerIdx}_${c.victimIdx}`, c.count);
+  const maxCount = matrix.reduce((m, c) => Math.max(m, c.count), 0);
+
+  parts.push(`<div class="analysis-section">`);
+  parts.push(`<p class="analysis-section-title">Duel matrix (rows killed columns)</p>`);
+  parts.push(`<div class="duel-matrix-wrap"><table class="duel-matrix">`);
+  parts.push(`<thead><tr><th></th>`);
+  for (const p of players) {
+    parts.push(`<th style="color:${teamColor(p.team)}" title="${escapeHtml(p.name)}">${escapeHtml(p.name.slice(0, 3))}</th>`);
+  }
+  parts.push(`</tr></thead><tbody>`);
+  for (const rowP of players) {
+    parts.push(`<tr><th style="color:${teamColor(rowP.team)}">${escapeHtml(rowP.name)}</th>`);
+    for (const colP of players) {
+      if (rowP.i === colP.i) {
+        parts.push(`<td class="duel-matrix-cell duel-matrix-cell--self"></td>`);
+        continue;
+      }
+      const count = countOf.get(`${rowP.i}_${colP.i}`) ?? 0;
+      const alpha = maxCount > 0 ? 0.12 + 0.55 * (count / maxCount) : 0;
+      const bg = count > 0 ? `rgba(224,85,85,${alpha.toFixed(2)})` : "transparent";
+      parts.push(
+        `<td class="duel-matrix-cell" style="background:${bg}" title="${escapeHtml(rowP.name)} killed ${escapeHtml(colP.name)} ${count} time${count === 1 ? "" : "s"}">${count || ""}</td>`,
+      );
+    }
+    parts.push(`</tr>`);
+  }
+  parts.push(`</tbody></table></div>`);
+  parts.push(`</div>`);
+
+  // Opening duels
+  parts.push(`<div class="analysis-section">`);
+  parts.push(`<p class="analysis-section-title">Opening duels</p>`);
+  parts.push(`<label class="toggle" style="margin-bottom:0.5rem">`);
+  parts.push(
+    `<input type="checkbox" id="duels-ignore-traded"${duelsIgnoreTraded ? " checked" : ""} /><span>Exclude traded (entry winner traded back within 5s)</span>`,
+  );
+  parts.push(`</label>`);
+
+  const openingStats = buildOpeningDuelStats(data, { ignoreTraded: duelsIgnoreTraded });
+  for (const os of openingStats.sort((a, b) => a.team - b.team)) {
+    const teamLabel = os.team === 2 ? "T side" : os.team === 3 ? "CT side" : `Team ${os.team}`;
+    parts.push(
+      `<div class="analysis-team-header"><div class="analysis-team-badge" style="background:${teamColor(os.team)}"></div><span class="analysis-section-title" style="margin:0">${teamLabel}</span></div>`,
+    );
+    parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Opening duels won</span><span class="analysis-stat-value">${os.duelsWon}</span></div>`);
+    parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Opening duels lost</span><span class="analysis-stat-value">${os.duelsLost}</span></div>`);
+    parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Won → round won</span><span class="analysis-stat-value analysis-stat-value--good">${pct(os.conversionPct)}</span></div>`);
+    parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">Lost → round lost</span><span class="analysis-stat-value analysis-stat-value--bad">${pct(os.lostConversionPct)}</span></div>`);
+  }
+  parts.push(`</div>`);
+
+  duelsContentEl.innerHTML = parts.join("");
+
+  const ignoreTradedEl = document.getElementById("duels-ignore-traded") as HTMLInputElement | null;
+  ignoreTradedEl?.addEventListener("change", () => {
+    duelsIgnoreTraded = ignoreTradedEl.checked;
+    buildDuelsPanel();
+  });
+}
+const BUY_TYPE_LABEL: Record<string, string> = {
+  pistol: "Pistol",
+  eco: "Eco",
+  semi: "Semi-buy",
+  force: "Force-buy",
+  full: "Full buy",
+};
+const BUY_TYPE_CLASS: Record<string, string> = {
+  pistol: "",
+  eco: "",
+  semi: "",
+  force: "warn",
+  full: "good",
+};
+
+function buildEconomyPanel(): void {
+  if (!data) {
+    economyContentEl.innerHTML = '<p class="analysis-empty">Load a demo to see economy stats.</p>';
+    return;
+  }
+  if (!data.roundClockStarts?.length) {
+    economyContentEl.innerHTML =
+      '<p class="analysis-empty">No round-clock data in this demo — re-export to enable economy stats.</p>';
+    return;
+  }
+
+  const report = buildEconomyReport(data);
+  const summary = summarizeByBuyType(report);
+  const parts: string[] = [];
+
+  parts.push(`<div class="analysis-section">`);
+  parts.push(`<p class="analysis-section-title">Round outcomes by buy type</p>`);
+  const maxRounds = summary.reduce((m, s) => Math.max(m, s.roundsWon + s.roundsLost), 0);
+  for (const s of summary) {
+    const total = s.roundsWon + s.roundsLost;
+    parts.push(`<div class="analysis-bar-row">`);
+    parts.push(
+      `<div class="analysis-bar-label"><span>${BUY_TYPE_LABEL[s.buyType]}</span><span>${s.roundsWon}W / ${s.roundsLost}L</span></div>`,
+    );
+    parts.push(renderBar(total, maxRounds, BUY_TYPE_CLASS[s.buyType]));
+    parts.push(`</div>`);
+  }
+  parts.push(`</div>`);
+
+  for (const team of [2, 3]) {
+    const teamRows = report.filter((r) => r.team === team);
+    if (!teamRows.length) continue;
+    const teamLabel = team === 2 ? "T side" : "CT side";
+    parts.push(`<div class="analysis-section">`);
+    parts.push(
+      `<div class="analysis-team-header"><div class="analysis-team-badge" style="background:${teamColor(team)}"></div><span class="analysis-section-title" style="margin:0">${teamLabel} — by round</span></div>`,
+    );
+    for (const r of teamRows) {
+      const badgeCls = BUY_TYPE_CLASS[r.buyType];
+      const badgeClsAttr = badgeCls ? ` analysis-stat-value--${badgeCls}` : "";
+      const wl = r.won === undefined ? "" : r.won ? " · won" : " · lost";
+      parts.push(
+        `<div class="analysis-stat-row"><span class="analysis-stat-label">Round ${r.round + 1} <span class="analysis-stat-value${badgeClsAttr}" style="font-size:0.7rem">${BUY_TYPE_LABEL[r.buyType]}</span>${wl}</span><span class="analysis-stat-value">$${r.startCash.toLocaleString()} cash · ~$${r.equipValue.toLocaleString()} equip</span></div>`,
+      );
+    }
+    parts.push(`</div>`);
+  }
+
+  economyContentEl.innerHTML = parts.join("");
+}
+const UTILITY_WEAPON_SLUGS: { slug: string; label: string }[] = [
+  { slug: "hegrenade", label: "HE" },
+  { slug: "flashbang", label: "Flash" },
+  { slug: "smokegrenade", label: "Smoke" },
+  { slug: "molotov", label: "Molotov" },
+  { slug: "incgrenade", label: "Incendiary" },
+  { slug: "decoy", label: "Decoy" },
+];
+
+function nameForIdx(idx: number): string {
+  return data?.players.find((p) => p.i === idx)?.name ?? `#${idx}`;
+}
+
+function buildUtilitiesPanel(): void {
+  if (!data) {
+    utilitiesContentEl.innerHTML = '<p class="analysis-empty">Load a demo to see utility stats.</p>';
+    return;
+  }
+
+  const parts: string[] = [];
+  parts.push(`<div class="subtab-row">`);
+  for (const [id, label] of [
+    ["throws", "Throws"],
+    ["flashes", "Flashes"],
+    ["damage", "Damage"],
+  ] as const) {
+    parts.push(
+      `<button type="button" class="subtab${utilitiesSubTab === id ? " subtab--active" : ""}" data-subtab="${id}">${label}</button>`,
+    );
+  }
+  parts.push(`</div>`);
+
+  if (utilitiesSubTab === "throws") {
+    if (!data.utilities?.length) {
+      parts.push(`<p class="analysis-empty">No utility-throw data in this demo.</p>`);
+    } else {
+      for (const { slug, label } of UTILITY_WEAPON_SLUGS) {
+        const stats = buildThrowStats(data, slug).sort((a, b) => b.thrown - a.thrown);
+        if (!stats.length) continue;
+        parts.push(`<div class="analysis-section">`);
+        parts.push(`<p class="analysis-section-title">${label} thrown</p>`);
+        const max = stats[0].thrown;
+        for (const s of stats) {
+          parts.push(`<div class="analysis-bar-row">`);
+          parts.push(
+            `<div class="analysis-bar-label"><span>${escapeHtml(nameForIdx(s.playerIdx))}</span><span>${s.thrown}</span></div>`,
+          );
+          parts.push(renderBar(s.thrown, max));
+          parts.push(`</div>`);
+        }
+        parts.push(`</div>`);
+      }
+    }
+  } else if (utilitiesSubTab === "flashes") {
+    if (!data.flashVictims?.length) {
+      parts.push(
+        `<p class="analysis-empty">This demo records no blind events. GOTV/HLTV demos (such as Majors) usually omit this information, so flash stats cannot be computed. This is not an error.</p>`,
+      );
+    } else {
+      const flashStats = buildFlashStats(data).sort((a, b) => b.enemiesBlinded - a.enemiesBlinded);
+      parts.push(`<div class="analysis-section">`);
+      parts.push(`<p class="analysis-section-title">Flash stats</p>`);
+      for (const s of flashStats) {
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">${escapeHtml(nameForIdx(s.playerIdx))}</span><span class="analysis-stat-value">${s.thrown} thrown · ${s.enemiesBlinded} blinded</span></div>`);
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label" style="padding-left:0.5rem">avg duration</span><span class="analysis-stat-value">${s.avgDurationSec.toFixed(1)}s · ${s.blindedPerRound.toFixed(2)}/round</span></div>`);
+      }
+      parts.push(`</div>`);
+
+      const impact = buildFlashImpact(data).sort((a, b) => b.killsFromBlinds - a.killsFromBlinds);
+      if (impact.length) {
+        parts.push(`<div class="analysis-section">`);
+        parts.push(`<p class="analysis-section-title">Flash impact — enemies blinded who died while blind</p>`);
+        for (const i of impact) {
+          parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">${escapeHtml(nameForIdx(i.flasherIdx))}</span><span class="analysis-stat-value analysis-stat-value--good">${i.killsFromBlinds}</span></div>`);
+        }
+        parts.push(`</div>`);
+      }
+    }
+  } else {
+    const dmgStats = buildDamageStats(data);
+    if (dmgStats === null) {
+      parts.push(
+        `<p class="analysis-empty">Purchase/damage data isn't available for this replay. Re-export the demo to see it.</p>`,
+      );
+    } else if (!dmgStats.length) {
+      parts.push(`<p class="analysis-empty">No HE/molotov damage recorded.</p>`);
+    } else {
+      parts.push(`<div class="analysis-section">`);
+      parts.push(`<p class="analysis-section-title">HE / molotov damage</p>`);
+      for (const s of dmgStats.sort((a, b) => b.heDamage + b.molotovDamage - (a.heDamage + a.molotovDamage))) {
+        parts.push(`<div class="analysis-stat-row"><span class="analysis-stat-label">${escapeHtml(nameForIdx(s.playerIdx))}</span><span class="analysis-stat-value">${s.heDamage} HE · ${s.molotovDamage} fire · ${s.utilityKills} kills</span></div>`);
+      }
+      parts.push(`</div>`);
+    }
+  }
+
+  utilitiesContentEl.innerHTML = parts.join("");
+
+  utilitiesContentEl.querySelectorAll<HTMLButtonElement>(".subtab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      utilitiesSubTab = btn.dataset.subtab as typeof utilitiesSubTab;
+      buildUtilitiesPanel();
+    });
+  });
+}
+function buildCommentsPanel(): void {
+  const parts: string[] = [];
+
+  if (!data) {
+    commentsContentEl.innerHTML = '<p class="analysis-empty">Load a demo to add comments.</p>';
+    return;
+  }
+
+  if (!commentModeEl.checked && !pendingComment) {
+    parts.push(
+      `<p class="analysis-empty">Check "Comment mode" above the map, then click a spot on the map to leave a comment.</p>`,
+    );
+  }
+
+  if (pendingComment) {
+    const p = pendingComment;
+    parts.push(`<div class="analysis-section">`);
+    parts.push(`<p class="analysis-section-title">New comment — round ${p.round + 1}</p>`);
+    parts.push(`<textarea id="comment-draft-text" class="comment-draft-text" placeholder="Write a comment..." rows="3"></textarea>`);
+    parts.push(`<div class="comment-draft-row">`);
+    parts.push(`<select id="comment-draft-kind">`);
+    for (const kind of Object.keys(COMMENT_KIND_LABEL) as CommentKind[]) {
+      parts.push(`<option value="${kind}">${COMMENT_KIND_LABEL[kind]}</option>`);
+    }
+    parts.push(`</select>`);
+    parts.push(`<input type="text" id="comment-draft-author" placeholder="Your name (optional)" />`);
+    parts.push(`</div>`);
+    parts.push(`<div class="comment-draft-row">`);
+    parts.push(`<button type="button" id="comment-draft-save">Save</button>`);
+    parts.push(`<button type="button" id="comment-draft-cancel">Cancel</button>`);
+    parts.push(`</div>`);
+    parts.push(`</div>`);
+  }
+
+  const all = commentStore.listAll();
+  parts.push(`<div class="analysis-section">`);
+  parts.push(`<p class="analysis-section-title">Comments (${all.length})</p>`);
+  if (!all.length) {
+    parts.push(`<p class="analysis-empty">No comments yet.</p>`);
+  }
+  for (const c of all) {
+    parts.push(`<div class="comment-row">`);
+    parts.push(
+      `<span class="comment-kind-badge" style="background:${COMMENT_KIND_COLOR[c.kind]}20;color:${COMMENT_KIND_COLOR[c.kind]};border:1px solid ${COMMENT_KIND_COLOR[c.kind]}55">${COMMENT_KIND_LABEL[c.kind]}</span>`,
+    );
+    parts.push(`<span class="comment-text">${escapeHtml(c.text)}</span>`);
+    if (c.author) parts.push(`<span class="comment-author">— ${escapeHtml(c.author)}</span>`);
+    parts.push(`<div class="comment-row-actions">`);
+    parts.push(`<button type="button" class="comment-jump" data-tick="${c.tick}">Jump to moment</button>`);
+    parts.push(`<button type="button" class="comment-delete" data-id="${c.id}">Delete</button>`);
+    parts.push(`</div>`);
+    parts.push(`</div>`);
+  }
+  parts.push(`</div>`);
+
+  commentsContentEl.innerHTML = parts.join("");
+
+  document.getElementById("comment-draft-save")?.addEventListener("click", () => {
+    if (!pendingComment) return;
+    const text = (document.getElementById("comment-draft-text") as HTMLTextAreaElement)?.value.trim();
+    if (!text) return;
+    const kind = (document.getElementById("comment-draft-kind") as HTMLSelectElement).value as CommentKind;
+    const author = (document.getElementById("comment-draft-author") as HTMLInputElement).value.trim();
+    commentStore.add({
+      tick: pendingComment.tick,
+      round: pendingComment.round,
+      targetType: "point",
+      x: pendingComment.x,
+      y: pendingComment.y,
+      text,
+      kind,
+      author: author || undefined,
+    });
+    pendingComment = null;
+    buildCommentsPanel();
+    renderCoachAndComments();
+  });
+
+  document.getElementById("comment-draft-cancel")?.addEventListener("click", () => {
+    pendingComment = null;
+    buildCommentsPanel();
+  });
+
+  commentsContentEl.querySelectorAll<HTMLButtonElement>(".comment-jump").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      jumpToTick(Number(btn.dataset.tick));
+    });
+  });
+
+  commentsContentEl.querySelectorAll<HTMLButtonElement>(".comment-delete").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      commentStore.remove(btn.dataset.id!);
+      buildCommentsPanel();
+      renderCoachAndComments();
+    });
+  });
+}
+
+function renderCommentMarkers(round: number): void {
+  for (const c of commentStore.listForRound(round)) {
+    if (c.x === undefined || c.y === undefined) continue;
+    const { x, y } = worldXYToCanvas(c.x, c.y);
+    coachCtx.save();
+    coachCtx.fillStyle = COMMENT_KIND_COLOR[c.kind];
+    coachCtx.strokeStyle = "rgba(10,12,15,0.85)";
+    coachCtx.lineWidth = 1.5;
+    coachCtx.beginPath();
+    coachCtx.arc(x, y, 7, 0, Math.PI * 2);
+    coachCtx.fill();
+    coachCtx.stroke();
+    coachCtx.fillStyle = "rgba(10,12,15,0.95)";
+    coachCtx.font = "700 9px Segoe UI, system-ui, sans-serif";
+    coachCtx.textAlign = "center";
+    coachCtx.textBaseline = "middle";
+    coachCtx.fillText("!", x, y + 1);
+    coachCtx.restore();
+  }
+}
+
+/** Shared "All / [T] name / [CT] name" roster dropdown, reused by heatmap + follow-mode selects. */
+function populatePlayerSelect(el: HTMLSelectElement, allLabel = "All"): void {
+  if (!data) {
+    el.innerHTML = `<option value="-1">${escapeHtml(allLabel)}</option>`;
+    return;
+  }
+  const parts: string[] = [`<option value="-1">${escapeHtml(allLabel)}</option>`];
   for (const p of data.players) {
     const team = p.team === 2 ? "[T]" : p.team === 3 ? "[CT]" : "";
     parts.push(`<option value="${p.i}">${team} ${escapeHtml(p.name)}</option>`);
   }
-  heatmapPlayerSelectEl.innerHTML = parts.join("");
+  el.innerHTML = parts.join("");
+}
+
+function updateHeatmapPlayerSelect(): void {
+  populatePlayerSelect(heatmapPlayerSelectEl, "All");
+  populatePlayerSelect(followPlayerSelectEl, "Select a player…");
 }
 
 function escapeAttr(s: string): string {
@@ -1330,12 +1931,15 @@ function secondsForFrameStep(fromIdx: number): number {
   return dTick / data.tickRate;
 }
 
+const AUTO_ADVANCE_PAUSE_MS = 1500;
+
 function tickPlayback(ts: number): void {
   if (!playing || !data) return;
   if (lastFrameTime === 0) lastFrameTime = ts;
   const dt = (ts - lastFrameTime) / 1000;
   lastFrameTime = ts;
   playAccum += dt;
+  const prevTick = data.frames[frameIndex][0];
   while (frameIndex < data.frames.length - 1) {
     const stepSec = secondsForFrameStep(frameIndex) / Math.max(0.1, playSpeed);
     if (playAccum < stepSec) break;
@@ -1344,6 +1948,28 @@ function tickPlayback(ts: number): void {
   }
   scrub.value = String(frameIndex);
   render();
+
+  if (autoAdvance && data.roundEndsHud?.length) {
+    const round = currentRound();
+    const curTick = data.frames[frameIndex][0];
+    const justEnded =
+      round !== lastAutoAdvanceRound &&
+      data.roundEndsHud.some(([t, r]) => r === round && t > prevTick && t <= curTick);
+    if (justEnded) {
+      lastAutoAdvanceRound = round;
+      stopPlayback();
+      setTimeout(() => {
+        jumpToRound(round + 1, { afterFreeze: skipFreezeOnRoundNav });
+        if (!data?.frames.length || frameIndex >= data.frames.length - 1) return;
+        playing = true;
+        playBtn.setAttribute("aria-pressed", "true");
+        playBtn.textContent = "Pause";
+        raf = requestAnimationFrame(tickPlayback);
+      }, AUTO_ADVANCE_PAUSE_MS);
+      return;
+    }
+  }
+
   if (frameIndex >= data.frames.length - 1) {
     playing = false;
     playBtn.setAttribute("aria-pressed", "false");
@@ -1373,6 +1999,49 @@ scrub.addEventListener("input", () => {
   if (!data) return;
   frameIndex = Number(scrub.value);
   render();
+});
+
+/** Jump playback to the first frame at or after `tick`, pausing playback. */
+function jumpToTick(tick: number): void {
+  if (!data?.frames.length) return;
+  stopPlayback();
+  const idx = Math.min(
+    Math.max(lowerBoundBy(data.frames, tick, (f) => f[0]), 0),
+    data.frames.length - 1,
+  );
+  frameIndex = idx;
+  scrub.value = String(frameIndex);
+  render();
+}
+
+/**
+ * Jump to a round boundary. `afterFreeze` targets the live-clock start
+ * (skips buy/freeze time); otherwise targets the round's first exported frame.
+ */
+function jumpToRound(round: number, opts: { afterFreeze?: boolean } = {}): void {
+  if (!data?.frames.length) return;
+  const target = Math.max(0, round);
+  if (opts.afterFreeze) {
+    const match = (data.roundClockStarts ?? []).find(([, r]) => r === target);
+    if (match) {
+      jumpToTick(match[0]);
+      return;
+    }
+  }
+  const frame = data.frames.find((f) => f[1] === target);
+  if (frame) jumpToTick(frame[0]);
+}
+
+function currentRound(): number {
+  return data?.frames.length ? data.frames[frameIndex][1] : 0;
+}
+
+prevRoundBtn.addEventListener("click", () => {
+  jumpToRound(currentRound() - 1, { afterFreeze: skipFreezeOnRoundNav });
+});
+
+nextRoundBtn.addEventListener("click", () => {
+  jumpToRound(currentRound() + 1, { afterFreeze: skipFreezeOnRoundNav });
 });
 
 function setExportProgressVisible(show: boolean): void {
@@ -1625,7 +2294,7 @@ demoExportDemBtn.addEventListener("click", async () => {
   metaEl.textContent = "Exporting demo (browser WASM, server fallback if needed)…";
   try {
     const body = await exportDemoPreferred(file);
-    await applyDemoPayload(body);
+    await applyDemoPayload(body, { kind: "file", label: file.name });
     metaEl.textContent = `Loaded: ${body.demoPath} (${body.mapName})`;
   } catch (e) {
     errorEl.hidden = false;
@@ -1673,8 +2342,60 @@ showHeatmapEl.addEventListener("change", () => {
   render();
 });
 
+skipFreezeEl.addEventListener("change", () => {
+  skipFreezeOnRoundNav = skipFreezeEl.checked;
+});
+
+autoAdvanceEl.addEventListener("change", () => {
+  autoAdvance = autoAdvanceEl.checked;
+  lastAutoAdvanceRound = -1;
+});
+
+perfModeEl.addEventListener("change", () => {
+  perfMode = perfModeEl.checked;
+  render();
+});
+
+function updateViewportMode(): void {
+  if (followModeEl.checked) {
+    const idx = Number(followPlayerSelectEl.value);
+    viewportMode = Number.isFinite(idx) && idx >= 0 ? { kind: "follow", playerIdx: idx } : { kind: "fixed" };
+  } else if (autoZoomEl.checked) {
+    viewportMode = { kind: "auto-zoom" };
+  } else {
+    viewportMode = { kind: "fixed" };
+  }
+  render();
+}
+
+autoZoomEl.addEventListener("change", () => {
+  if (autoZoomEl.checked) {
+    followModeEl.checked = false;
+    followPlayerWrapEl.hidden = true;
+  }
+  updateViewportMode();
+});
+
+followModeEl.addEventListener("change", () => {
+  followPlayerWrapEl.hidden = !followModeEl.checked;
+  if (followModeEl.checked) autoZoomEl.checked = false;
+  updateViewportMode();
+});
+
+followPlayerSelectEl.addEventListener("change", () => {
+  updateViewportMode();
+});
+
 heatmapPlayerSelectEl.addEventListener("change", () => {
   analysisPlayerIdx = Number(heatmapPlayerSelectEl.value);
+  render();
+});
+
+heatmapWeightSelectEl.addEventListener("change", () => {
+  render();
+});
+
+heatmapFloorSelectEl.addEventListener("change", () => {
   render();
 });
 
@@ -1691,11 +2412,86 @@ tabBtns.forEach((btn) => {
       b.classList.toggle("legend-tab--active", b === btn);
       b.setAttribute("aria-selected", b === btn ? "true" : "false");
     });
-    const tab = btn.dataset.tab;
-    panelLive.classList.toggle("legend-panel--hidden", tab !== "live");
-    panelAnalysis.classList.toggle("legend-panel--hidden", tab !== "analysis");
-    if (tab === "analysis" && analysis) buildAnalysisPanel();
+    const tab = btn.dataset.tab ?? "live";
+    for (const [id, panel] of Object.entries(tabPanels)) {
+      panel.classList.toggle("legend-panel--hidden", id !== tab);
+    }
+    tabOnActivate[tab]?.();
   });
+});
+
+const coachInput = new CoachInput(
+  coachOverlay,
+  coachStore,
+  currentRound,
+  canvasToWorldXY,
+  () => renderCoachAndComments(),
+);
+
+function updateOverlayInteractivity(): void {
+  const interactive = coachModeEl.checked || commentModeEl.checked;
+  coachOverlay.classList.toggle("coach-overlay--interactive", interactive);
+  coachToolsEl.hidden = !coachModeEl.checked;
+  coachInput.tool = coachModeEl.checked ? (coachActiveTool() as CoachTool) : "select";
+}
+
+function coachActiveTool(): CoachTool {
+  const active = document.querySelector<HTMLButtonElement>(".tool-btn--active");
+  return (active?.dataset.tool as CoachTool) ?? "select";
+}
+
+coachModeEl.addEventListener("change", () => {
+  if (coachModeEl.checked) commentModeEl.checked = false;
+  updateOverlayInteractivity();
+});
+
+commentModeEl.addEventListener("change", () => {
+  if (commentModeEl.checked) coachModeEl.checked = false;
+  updateOverlayInteractivity();
+});
+
+toolBtns.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    toolBtns.forEach((b) => b.classList.toggle("tool-btn--active", b === btn));
+    coachInput.tool = (btn.dataset.tool as CoachTool) ?? "select";
+  });
+});
+
+coachColorEl.addEventListener("input", () => {
+  coachInput.color = coachColorEl.value;
+});
+
+coachThicknessEl.addEventListener("input", () => {
+  coachInput.strokeWidth = Number(coachThicknessEl.value);
+});
+
+coachUndoBtn.addEventListener("click", () => {
+  coachStore.undo();
+  renderCoachAndComments();
+});
+
+coachRedoBtn.addEventListener("click", () => {
+  coachStore.redo();
+  renderCoachAndComments();
+});
+
+coachClearBtn.addEventListener("click", () => {
+  coachStore.clearRound(currentRound());
+  renderCoachAndComments();
+});
+
+coachOverlay.addEventListener("click", (ev) => {
+  if (!commentModeEl.checked || !data?.frames.length) return;
+  const rect = coachOverlay.getBoundingClientRect();
+  const scaleX = coachOverlay.width / rect.width;
+  const scaleY = coachOverlay.height / rect.height;
+  const cx = (ev.clientX - rect.left) * scaleX;
+  const cy = (ev.clientY - rect.top) * scaleY;
+  const wp = canvasToWorldXY(cx, cy);
+  const frame = data.frames[frameIndex];
+  pendingComment = { tick: frame[0], round: frame[1], x: wp.x, y: wp.y };
+  const tabBtn = document.getElementById("tab-comments") as HTMLButtonElement | null;
+  tabBtn?.click();
 });
 
 async function tryLoadOverviewImage(mapName: string): Promise<HTMLImageElement | null> {
@@ -1728,7 +2524,10 @@ function validateDemoData(x: unknown): x is DemoData {
   );
 }
 
-async function applyDemoPayload(parsed: DemoData): Promise<void> {
+async function applyDemoPayload(
+  parsed: DemoData,
+  source?: { kind: "url" | "file" | "session"; url?: string; label?: string },
+): Promise<void> {
   stopPlayback();
   errorEl.hidden = true;
   data = parsed;
@@ -1766,11 +2565,48 @@ async function applyDemoPayload(parsed: DemoData): Promise<void> {
 
   analysis = analyzeDemo(data, bb ?? defaultBBox);
   updateHeatmapPlayerSelect();
+  heatmapFloorWrapEl.hidden = analysis.heatmapsByFloor.size === 0;
+  heatmapFloorSelectEl.value = "all";
 
   setMetaLine();
   buildLegend();
   buildAnalysisPanel();
   render();
+
+  if (source) {
+    saveRecentDemo({
+      label: source.label ?? data.mapName,
+      mapName: data.mapName,
+      roundCount: analysis.totalRounds,
+      sourceKind: source.kind,
+      url: source.url,
+    });
+    populateRecentDemosList();
+  }
+}
+
+function populateRecentDemosList(): void {
+  const entries = loadRecentDemos();
+  recentDemosWrapEl.hidden = entries.length === 0;
+  const parts: string[] = [];
+  for (const e of entries) {
+    if (e.sourceKind === "url") {
+      parts.push(
+        `<button type="button" class="recent-demo-chip" data-id="${escapeAttr(e.id)}" data-url="${escapeAttr(e.url ?? "")}">${escapeHtml(e.mapName)} · ${e.roundCount}rd</button>`,
+      );
+    } else {
+      parts.push(
+        `<span class="recent-demo-chip recent-demo-chip--disabled" title="Loaded from a local file — reopen manually">${escapeHtml(e.mapName)} · ${e.roundCount}rd (reopen manually)</span>`,
+      );
+    }
+  }
+  recentDemosListEl.innerHTML = parts.join("");
+  recentDemosListEl.querySelectorAll<HTMLButtonElement>(".recent-demo-chip[data-url]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const url = btn.dataset.url;
+      if (url) void loadDemoFromUrl(url);
+    });
+  });
 }
 
 async function loadDemoFromUrl(url: string): Promise<void> {
@@ -1790,7 +2626,7 @@ async function loadDemoFromUrl(url: string): Promise<void> {
         "JSON is not a valid demo export (need mapName, tickRate, tickStep, players, frames).",
       );
     }
-    await applyDemoPayload(raw);
+    await applyDemoPayload(raw, { kind: "url", url: trimmed });
   } catch (e) {
     errorEl.hidden = false;
     errorEl.textContent =
@@ -1810,13 +2646,71 @@ async function loadDemoFromFile(file: File): Promise<void> {
         "File is not a valid demo export (need mapName, tickRate, tickStep, players, frames).",
       );
     }
-    await applyDemoPayload(raw);
+    await applyDemoPayload(raw, { kind: "file", label: file.name });
   } catch (e) {
     errorEl.hidden = false;
     errorEl.textContent =
       e instanceof Error ? e.message : "Failed to read demo JSON.";
   }
 }
+
+sessionExportBtn.addEventListener("click", () => {
+  if (!data) return;
+  const envelope: SessionEnvelope = {
+    kind: "cs2-2d-demo-viewer-session",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    demoData: data,
+    comments: commentStore.toJSON(),
+    coachDrawings: coachStore.toJSON(),
+    playbackSettings: {
+      playSpeed,
+      showShots: showShotsEl.checked,
+      showUtilities: showUtilitiesEl.checked,
+      showEffects: showEffectsEl.checked,
+      showPositions: showPositionsEl.checked,
+      showHeatmap: showHeatmapEl.checked,
+      skipFreeze: skipFreezeEl.checked,
+      autoAdvance: autoAdvanceEl.checked,
+      autoZoom: autoZoomEl.checked,
+      perfMode: perfModeEl.checked,
+    },
+  };
+  downloadSessionEnvelope(envelope, data.mapName || "demo");
+});
+
+sessionImportInput.addEventListener("change", async () => {
+  const file = sessionImportInput.files?.[0];
+  sessionImportInput.value = "";
+  if (!file) return;
+  errorEl.hidden = true;
+  try {
+    const envelope = await importSessionFile(file);
+    await applyDemoPayload(envelope.demoData, { kind: "session", label: file.name });
+    commentStore.loadFromJSON(envelope.comments);
+    coachStore.loadFromJSON(envelope.coachDrawings);
+    const s = envelope.playbackSettings;
+    playSpeed = s.playSpeed;
+    speedBtns.forEach((b) => b.classList.toggle("speed-btn--active", Number(b.dataset.speed) === s.playSpeed));
+    showShotsEl.checked = s.showShots;
+    showUtilitiesEl.checked = s.showUtilities;
+    showEffectsEl.checked = s.showEffects;
+    showPositionsEl.checked = s.showPositions;
+    showHeatmapEl.checked = s.showHeatmap;
+    skipFreezeEl.checked = s.skipFreeze;
+    skipFreezeOnRoundNav = s.skipFreeze;
+    autoAdvanceEl.checked = s.autoAdvance;
+    autoAdvance = s.autoAdvance;
+    autoZoomEl.checked = s.autoZoom;
+    perfModeEl.checked = s.perfMode;
+    perfMode = s.perfMode;
+    updateViewportMode();
+    render();
+  } catch (e) {
+    errorEl.hidden = false;
+    errorEl.textContent = e instanceof Error ? e.message : "Failed to import session file.";
+  }
+});
 
 async function fillDemoSelect(): Promise<void> {
   type Entry = { label: string; url: string };
@@ -1850,6 +2744,7 @@ async function fillDemoSelect(): Promise<void> {
 
 async function initDemoPicker(): Promise<void> {
   await fillDemoSelect();
+  populateRecentDemosList();
   legendHelpEl.innerHTML =
     '<div class="legend-note"><strong>.dem → JSON</strong> runs in the dev server (<code>npm run dev</code>) via <strong>Export & load</strong>. Pre-built <code>vite preview</code> / static hosting has no parser.<br/><br/><strong>Bundled</strong> and <strong>JSON file</strong> work offline.</div>';
   render();

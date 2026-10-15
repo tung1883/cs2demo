@@ -4,7 +4,7 @@
  */
 import type { DemoData } from "../demoTypes";
 import type { BoundingBox } from "../utils/coords";
-import { MAP_POSITIONS, getPositionName, getFloorLabel, FLOOR_SPLIT_Z } from "../mapPositions";
+import { MAP_POSITIONS, getPositionName, getPositionNameNearest, getFloorLabel, FLOOR_SPLIT_Z } from "../mapPositions";
 
 export type AreaStat = { area: string; ticks: number; pct: number };
 export type WeaponStat = { weapon: string; count: number };
@@ -237,7 +237,7 @@ export function analyzeDemo(data: DemoData, bbox: BoundingBox): DemoAnalysis {
 
   for (const k of data.kills ?? []) {
     const [killTick, round, attackerIdx, victimIdx, weapon, headshot, vX, vY] = k;
-    const deathArea = getPositionName(mapName, vX, vY) ?? "Unknown";
+    const deathArea = getPositionNameNearest(mapName, vX, vY) ?? "Unknown";
 
     // victim
     countMap(playerDeaths, victimIdx);
@@ -562,8 +562,8 @@ function generateInsights(
 
     // Death hotspot
     if (p.deathAreas.length > 0) {
-      const dA = p.deathAreas[0];
-      if (dA.ticks >= 2) {
+      const dA = p.deathAreas.find((a) => a.area !== "Unknown") ?? p.deathAreas[0];
+      if (dA.area !== "Unknown" && dA.ticks >= 2) {
         insights.push(`[WEAKNESS] ${p.name}: Dies most at ${dA.area} (${dA.ticks}×) — opponents are winning that duel consistently.`);
       }
     }

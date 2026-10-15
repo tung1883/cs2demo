@@ -10,6 +10,7 @@ export type PlayerMeta = {
  * Extended: + balance (-1 unknown), gun slug, utils label, hasBomb (0|1) when exporter adds economy/C4.
  * Extended further: + Z world height (index 9) when exporter adds floor support — rows shorter
  * than 10 elements predate this and should be treated as "no floor data" (single-level heatmap only).
+ * Then: + health (10, -1 unknown), armor (11), has_helmet (12, 0|1) — rows shorter than 13 have no HP data.
  */
 export type FramePlayerRow = (number | string)[];
 /** [tick, round, players[]] */

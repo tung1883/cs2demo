@@ -4,176 +4,184 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CS2 2D Demo Viewer</title>
+    <link rel="icon" href="/cs2.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app">
-      <header class="toolbar">
-        <h1>CS2 2D Demo Viewer</h1>
-        <div class="controls demo-source-bar">
-          <label class="demo-file">
-            <span>CS2 .dem</span>
-            <input type="file" id="demo-dem-input" accept=".dem,.DEM" />
-          </label>
-          <button type="button" id="demo-export-dem">Export &amp; load</button>
-          <span class="demo-source-divider" aria-hidden="true"></span>
-          <label class="demo-source">
-            <span>Bundled demo</span>
-            <select id="demo-url-select"></select>
-          </label>
-          <button type="button" id="demo-load-url">Load</button>
-          <span class="demo-source-divider" aria-hidden="true"></span>
-          <label class="demo-file">
-            <span>JSON file</span>
-            <input type="file" id="demo-file-input" accept="application/json,.json" />
-          </label>
-          <span class="demo-source-divider" aria-hidden="true"></span>
-          <button type="button" id="session-export-btn">Export session</button>
-          <label class="demo-file">
-            <span>Import session</span>
-            <input type="file" id="session-import-input" accept="application/json,.json" />
-          </label>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="i-skull" viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 2.6 1.2 4.3 3 5.4V19h2.5v-2h1v2h3v-2h1v2H17v-3.6c1.8-1.1 3-2.8 3-5.4a8 8 0 0 0-8-8zm-3.2 9.5a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6zm6.4 0a1.8 1.8 0 1 1 0-3.6 1.8 1.8 0 0 1 0 3.6z"/></symbol>
+      <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-2 6z"/></symbol>
+      <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+      <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19L18 6M10 6h8v8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-path" viewBox="0 0 24 24"><path d="M3 18c4 0 3-12 8-12s3 12 10 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-note" viewBox="0 0 24 24"><path d="M4 4h16v13h-9l-5 4v-4H4z"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7H4v5M4.5 12A8 8 0 1 1 7 17.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-redo" viewBox="0 0 24 24"><path d="M15 7h5v5M19.5 12A8 8 0 1 0 17 17.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M6 4h4v16H6zM14 4h4v16h-4z"/></symbol>
+      <symbol id="i-prev" viewBox="0 0 24 24"><path d="M5 4h2.5v16H5zM20 4v16L9 12z"/></symbol>
+      <symbol id="i-next" viewBox="0 0 24 24"><path d="M16.5 4H19v16h-2.5zM4 4l11 8L4 20z"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17l9 5 9-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v4h16v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    </svg>
+
+    <div class="shell" id="app">
+      <!-- ============ TOP BAR ============ -->
+      <header class="top">
+        <div class="brand"><img src="/cs2.png" alt="" /> CS2 Viewer <small>2D</small></div>
+        <div class="demo-pill" id="demo-pill">
+          <span class="meta" id="meta">No demo loaded</span>
         </div>
-        <div class="meta" id="meta">
-          Choose a .dem (exported in-browser via WASM; <code>npm run dev</code> adds a faster native fallback), bundled JSON, or export file.
-        </div>
-        <div class="recent-demos" id="recent-demos-wrap" hidden>
-          <span class="recent-demos-label">Recent:</span>
-          <div id="recent-demos-list" class="recent-demos-list"></div>
-        </div>
-        <div id="export-progress" class="export-progress" hidden aria-live="polite">
-          <div class="export-progress-track">
-            <div id="export-progress-fill" class="export-progress-fill"></div>
-          </div>
-          <span id="export-progress-label" class="export-progress-label"></span>
-        </div>
-        <div class="controls playback-bar">
-          <button type="button" id="play" aria-pressed="false">Play</button>
-          <div class="speed-group">
-            <span class="speed-label">Speed</span>
-            <button type="button" class="speed-btn" data-speed="0.5">0.5×</button>
-            <button type="button" class="speed-btn speed-btn--active" data-speed="1">1×</button>
-            <button type="button" class="speed-btn" data-speed="2">2×</button>
-            <button type="button" class="speed-btn" data-speed="4">4×</button>
-          </div>
-          <div class="round-nav">
-            <button type="button" id="prev-round" title="Previous round">‹ Round</button>
-            <button type="button" id="next-round" title="Next round">Round ›</button>
-          </div>
-          <label class="seek">
-            <span>Tick</span>
-            <input type="range" id="scrub" min="0" max="0" value="0" />
-          </label>
-          <span id="time-readout" class="readout"></span>
-          <span id="bomb-hud" class="readout bomb-hud" aria-live="polite"></span>
-          <label class="toggle">
-            <input type="checkbox" id="show-shots" checked />
-            <span>Gunshots</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-utilities" checked />
-            <span>Utilities</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-effects" checked />
-            <span>Effects</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-positions" checked />
-            <span>Areas</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="show-heatmap" />
-            <span>Heatmap</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="skip-freeze" />
-            <span>Skip freeze</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="auto-advance" />
-            <span>Auto-advance</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="auto-zoom" />
-            <span>Auto-zoom</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="perf-mode" />
-            <span>Performance mode</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="follow-mode" />
-            <span>Follow</span>
-          </label>
-          <label class="heatmap-player-wrap" id="follow-player-wrap" hidden>
-            <span>Player</span>
-            <select id="follow-player-select" class="heatmap-player-select"></select>
-          </label>
-          <label class="heatmap-player-wrap">
-            <span>Player</span>
-            <select id="heatmap-player-select" class="heatmap-player-select"></select>
-          </label>
-          <label class="heatmap-player-wrap">
-            <span>Weight</span>
-            <select id="heatmap-weight-select" class="heatmap-player-select">
-              <option value="dwell">Dwell time</option>
-              <option value="coverage">Coverage</option>
-            </select>
-          </label>
-          <label class="heatmap-player-wrap" id="heatmap-floor-wrap" hidden>
-            <span>Floor</span>
-            <select id="heatmap-floor-select" class="heatmap-player-select">
-              <option value="all">Both</option>
-              <option value="Upper">Upper</option>
-              <option value="Lower">Lower</option>
-            </select>
-          </label>
-        </div>
-        <div class="controls coach-toolbar" id="coach-toolbar">
-          <label class="toggle">
-            <input type="checkbox" id="coach-mode" />
-            <span>Coach mode</span>
-          </label>
-          <label class="toggle">
-            <input type="checkbox" id="comment-mode" />
-            <span>Comment mode</span>
-          </label>
-          <div class="coach-tools" id="coach-tools" hidden>
-            <button type="button" class="tool-btn tool-btn--active" data-tool="select">Select</button>
-            <button type="button" class="tool-btn" data-tool="rect">Rect</button>
-            <button type="button" class="tool-btn" data-tool="circle">Circle</button>
-            <button type="button" class="tool-btn" data-tool="arrow">Arrow</button>
-            <button type="button" class="tool-btn" data-tool="path">Path</button>
-            <button type="button" class="tool-btn" data-tool="grenade-path">Grenade</button>
-            <input type="color" id="coach-color" value="#3ddc97" title="Stroke color" />
-            <label class="coach-thickness">
-              <span>Width</span>
-              <input type="range" id="coach-thickness" min="1" max="8" value="3" />
-            </label>
-            <button type="button" id="coach-undo">Undo</button>
-            <button type="button" id="coach-redo">Redo</button>
-            <button type="button" id="coach-clear">Clear round</button>
-          </div>
-        </div>
+        <div class="grow"></div>
+        <button type="button" class="btn sm" id="session-export-btn">Export session</button>
+        <label class="btn sm file-btn">
+          Import session
+          <input type="file" id="session-import-input" accept="application/json,.json" hidden />
+        </label>
+        <button type="button" class="btn primary sm" id="open-load">
+          <svg class="ico"><use href="#i-upload" /></svg> Load demo
+        </button>
       </header>
+
+      <!-- ============ ROUND RAIL ============ -->
+      <nav class="rail" id="round-rail" aria-label="Rounds"></nav>
+
+      <!-- ============ STAGE ============ -->
       <main class="stage">
         <div class="canvas-stack">
           <canvas id="viewport" width="900" height="900"></canvas>
           <canvas id="coach-overlay" width="900" height="900"></canvas>
         </div>
-        <aside class="legend" id="legend">
-          <div class="legend-tabs" role="tablist">
-            <button class="legend-tab legend-tab--active" role="tab" aria-selected="true" data-tab="live" id="tab-live">Live</button>
-            <button class="legend-tab" role="tab" aria-selected="false" data-tab="analysis" id="tab-analysis">Analysis</button>
-            <button class="legend-tab" role="tab" aria-selected="false" data-tab="duels" id="tab-duels">Duels</button>
-            <button class="legend-tab" role="tab" aria-selected="false" data-tab="economy" id="tab-economy">Economy</button>
-            <button class="legend-tab" role="tab" aria-selected="false" data-tab="utilities" id="tab-utilities">Utilities</button>
-            <button class="legend-tab" role="tab" aria-selected="false" data-tab="comments" id="tab-comments">Comments</button>
+
+        <!-- floating HUD -->
+        <div class="float hud-top" id="hud">
+          <div class="hud-main">
+            <div class="clock num" id="hud-clock">–:––</div>
+            <div class="hud-round" id="hud-round"></div>
           </div>
+          <div class="hud-sides">
+            <div class="hud-team hud-ct"><span>CT</span><b id="hud-ct-alive" class="num">–</b></div>
+            <div class="hud-team hud-t"><span>T</span><b id="hud-t-alive" class="num">–</b></div>
+          </div>
+          <div class="bomb" id="bomb-wrap">
+            <img src="/bomb_c4.svg" alt="" />
+            <span id="bomb-hud" class="bomb-hud" aria-live="polite"></span>
+          </div>
+        </div>
+
+        <!-- coach tool rail (shown in Coach mode) -->
+        <div class="float tools-v" id="coach-tools" hidden>
+          <button type="button" class="tool tool-btn tool-btn--active" data-tool="select" title="Select"><svg class="ico"><use href="#i-cursor" /></svg></button>
+          <button type="button" class="tool tool-btn" data-tool="rect" title="Rectangle"><svg class="ico"><use href="#i-rect" /></svg></button>
+          <button type="button" class="tool tool-btn" data-tool="circle" title="Circle"><svg class="ico"><use href="#i-circle" /></svg></button>
+          <button type="button" class="tool tool-btn" data-tool="arrow" title="Arrow"><svg class="ico"><use href="#i-arrow" /></svg></button>
+          <button type="button" class="tool tool-btn" data-tool="path" title="Path"><svg class="ico"><use href="#i-path" /></svg></button>
+          <button type="button" class="tool tool-btn" data-tool="grenade-path" title="Grenade path"><span class="uico" style="--ico:url(/weapons/molotov.svg);width:12px;height:18px"></span></button>
+          <hr />
+          <input type="color" id="coach-color" value="#3ddc97" title="Stroke color" />
+          <label class="coach-thickness" title="Stroke width">
+            <input type="range" id="coach-thickness" min="1" max="8" value="3" />
+          </label>
+          <hr />
+          <button type="button" class="tool" id="coach-undo" title="Undo"><svg class="ico"><use href="#i-undo" /></svg></button>
+          <button type="button" class="tool" id="coach-redo" title="Redo"><svg class="ico"><use href="#i-redo" /></svg></button>
+          <button type="button" class="tool" id="coach-clear" title="Clear round"><svg class="ico"><use href="#i-trash" /></svg></button>
+        </div>
+
+        <!-- layers -->
+        <div class="layers-wrap">
+          <button type="button" class="btn float-btn" id="layers-toggle" aria-expanded="true">
+            <svg class="ico"><use href="#i-layers" /></svg> Layers
+          </button>
+          <div class="float layers" id="layers-panel">
+            <label class="sw"><span>Gunshots</span><input type="checkbox" id="show-shots" checked /><i class="k"></i></label>
+            <label class="sw"><span>Utilities</span><input type="checkbox" id="show-utilities" checked /><i class="k"></i></label>
+            <label class="sw"><span>Effects</span><input type="checkbox" id="show-effects" checked /><i class="k"></i></label>
+            <label class="sw"><span>Area names</span><input type="checkbox" id="show-positions" checked /><i class="k"></i></label>
+            <label class="sw"><span>Heatmap</span><input type="checkbox" id="show-heatmap" /><i class="k"></i></label>
+            <div class="sub-opt heat-opts">
+              <label class="field"><span>Player</span>
+                <select id="heatmap-player-select" class="sel heatmap-player-select"></select>
+              </label>
+              <label class="field"><span>Weight</span>
+                <select id="heatmap-weight-select" class="sel heatmap-player-select">
+                  <option value="dwell">Dwell time</option>
+                  <option value="coverage">Coverage</option>
+                </select>
+              </label>
+              <label class="field" id="heatmap-floor-wrap" hidden><span>Floor</span>
+                <select id="heatmap-floor-select" class="sel heatmap-player-select">
+                  <option value="all">Both</option>
+                  <option value="Upper">Upper</option>
+                  <option value="Lower">Lower</option>
+                </select>
+              </label>
+            </div>
+            <label class="sw"><span>Follow player</span><input type="checkbox" id="follow-mode" /><i class="k"></i></label>
+            <div class="sub-opt follow-opts">
+              <label class="field" id="follow-player-wrap" hidden><span>Player</span>
+                <select id="follow-player-select" class="sel heatmap-player-select"></select>
+              </label>
+            </div>
+            <label class="sw"><span>Auto-zoom</span><input type="checkbox" id="auto-zoom" /><i class="k"></i></label>
+            <label class="sw"><span>Performance mode</span><input type="checkbox" id="perf-mode" /><i class="k"></i></label>
+          </div>
+        </div>
+
+        <p class="hint" id="error" hidden></p>
+      </main>
+
+      <!-- ============ PLAYBACK DOCK ============ -->
+      <section class="dock">
+        <div class="timeline">
+          <div class="tl-markers" id="timeline-markers" aria-hidden="true"></div>
+          <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Timeline" />
+        </div>
+        <div class="controls">
+          <button type="button" class="step" id="prev-round" title="Previous round"><svg class="ico"><use href="#i-prev" /></svg></button>
+          <button type="button" class="play" id="play" aria-pressed="false" title="Play / pause">
+            <svg class="ico ico-play"><use href="#i-play" /></svg>
+            <svg class="ico ico-pause"><use href="#i-pause" /></svg>
+          </button>
+          <button type="button" class="step" id="next-round" title="Next round"><svg class="ico"><use href="#i-next" /></svg></button>
+          <div class="speed">
+            <button type="button" class="speed-btn" data-speed="0.5">0.5×</button>
+            <button type="button" class="speed-btn speed-btn--active" data-speed="1">1×</button>
+            <button type="button" class="speed-btn" data-speed="2">2×</button>
+            <button type="button" class="speed-btn" data-speed="4">4×</button>
+          </div>
+          <span id="time-readout" class="readout num"></span>
+          <div class="chips">
+            <label class="chip"><input type="checkbox" id="skip-freeze" hidden /><span>Skip freeze</span></label>
+            <label class="chip"><input type="checkbox" id="auto-advance" hidden /><span>Auto-advance</span></label>
+            <label class="chip"><input type="checkbox" id="coach-mode" hidden /><span>Coach</span></label>
+            <label class="chip"><input type="checkbox" id="comment-mode" hidden /><span>Comment</span></label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ SIDE PANEL ============ -->
+      <aside class="side legend" id="legend">
+        <div class="legend-tabs tabs" role="tablist">
+          <button class="legend-tab legend-tab--active" role="tab" aria-selected="true" data-tab="live" id="tab-live">Live</button>
+          <button class="legend-tab" role="tab" aria-selected="false" data-tab="analysis" id="tab-analysis">Analysis</button>
+          <button class="legend-tab" role="tab" aria-selected="false" data-tab="duels" id="tab-duels">Duels</button>
+          <button class="legend-tab" role="tab" aria-selected="false" data-tab="economy" id="tab-economy">Economy</button>
+          <button class="legend-tab" role="tab" aria-selected="false" data-tab="utilities" id="tab-utilities">Util</button>
+          <button class="legend-tab" role="tab" aria-selected="false" data-tab="comments" id="tab-comments">Notes</button>
+        </div>
+        <div class="legend-body">
           <div id="panel-live" class="legend-panel">
-            <div id="legend-help" class="legend-help"></div>
             <div id="legend-roster" class="legend-roster" aria-live="polite"></div>
+            <details class="help">
+              <summary>About this panel</summary>
+              <div id="legend-help" class="legend-help"></div>
+            </details>
           </div>
           <div id="panel-analysis" class="legend-panel legend-panel--hidden">
             <div id="analysis-content" class="analysis-content">
@@ -200,9 +208,62 @@
               <p class="analysis-empty">Load a demo to add comments.</p>
             </div>
           </div>
-        </aside>
-      </main>
-      <p class="hint" id="error" hidden></p>
+        </div>
+      </aside>
+
+      <!-- ============ LOAD MODAL ============ -->
+      <div class="modal" id="load-modal" hidden>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="load-title">
+          <button type="button" class="btn ghost sm modal-close" id="load-close" aria-label="Close">✕</button>
+          <h2 id="load-title">Load a demo</h2>
+          <p class="modal-sub">
+            Pick a <code>.dem</code> (exported in-browser via WASM; <code>npm run dev</code> adds a faster native fallback),
+            a bundled JSON, or an export file.
+          </p>
+
+          <section class="load-row">
+            <h3>CS2 demo</h3>
+            <div class="load-controls">
+              <label class="btn file-btn">
+                Choose .dem
+                <input type="file" id="demo-dem-input" accept=".dem,.DEM" hidden />
+              </label>
+              <span class="file-name" id="demo-dem-name">No file</span>
+              <button type="button" class="btn primary" id="demo-export-dem">Export &amp; load</button>
+            </div>
+          </section>
+
+          <section class="load-row">
+            <h3>Bundled demo</h3>
+            <div class="load-controls">
+              <select id="demo-url-select" class="sel grow"></select>
+              <button type="button" class="btn" id="demo-load-url">Load</button>
+            </div>
+          </section>
+
+          <section class="load-row">
+            <h3>JSON export</h3>
+            <div class="load-controls">
+              <label class="btn file-btn">
+                Choose JSON
+                <input type="file" id="demo-file-input" accept="application/json,.json" hidden />
+              </label>
+            </div>
+          </section>
+
+          <div id="export-progress" class="export-progress" hidden aria-live="polite">
+            <div class="export-progress-track">
+              <div id="export-progress-fill" class="export-progress-fill"></div>
+            </div>
+            <span id="export-progress-label" class="export-progress-label"></span>
+          </div>
+
+          <div class="recent-demos" id="recent-demos-wrap" hidden>
+            <h3>Recent</h3>
+            <div id="recent-demos-list" class="recent-demos-list"></div>
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

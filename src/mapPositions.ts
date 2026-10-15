@@ -206,3 +206,38 @@ export function getPositionName(
   }
   return best?.name;
 }
+
+/** Squared distance from point to an axis-aligned rect (0 when inside). */
+function distSqToArea(x: number, y: number, area: NamedArea): number {
+  const dx = Math.max(area.minX - x, 0, x - area.maxX);
+  const dy = Math.max(area.minY - y, 0, y - area.maxY);
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Named area for (x, y), falling back to the nearest area's name when the point
+ * lands in the gaps between our hand-drawn boxes. The box list does not tile the
+ * whole playable space, so an exact-containment lookup returns `undefined` for
+ * most real kill/death coordinates — that gap is why death hotspots collapsed to
+ * a single "Unknown" bucket. Only returns `undefined` for an unmapped map.
+ */
+export function getPositionNameNearest(
+  mapName: string,
+  x: number,
+  y: number,
+): string | undefined {
+  const exact = getPositionName(mapName, x, y);
+  if (exact) return exact;
+  const areas = MAP_POSITIONS[mapName];
+  if (!areas || areas.length === 0) return undefined;
+  let best: NamedArea | undefined;
+  let bestD = Infinity;
+  for (const area of areas) {
+    const d = distSqToArea(x, y, area);
+    if (d < bestD) {
+      bestD = d;
+      best = area;
+    }
+  }
+  return best?.name;
+}

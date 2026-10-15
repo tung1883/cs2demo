@@ -22,6 +22,7 @@ import {
   worldToOverviewPixel,
 } from "./utils/overviewTransform";
 import { formatTime } from "./utils/time";
+import { loadIcon, setIconLoadHandler, weaponIconFile } from "./utils/icons";
 import { getPositionName } from "./mapPositions";
 import { analyzeDemo, type DemoAnalysis, type HeatmapData } from "./analysis/engine";
 import { computeEffectiveBBox, type ViewportMode } from "./utils/viewport";
@@ -63,6 +64,18 @@ const exportProgressFill = document.getElementById(
 )! as HTMLDivElement;
 const exportProgressLabel = document.getElementById("export-progress-label")!;
 const timeReadout = document.getElementById("time-readout")!;
+const hudClockEl = document.getElementById("hud-clock")!;
+const hudRoundEl = document.getElementById("hud-round")!;
+const hudCtAliveEl = document.getElementById("hud-ct-alive")!;
+const hudTAliveEl = document.getElementById("hud-t-alive")!;
+const roundRailEl = document.getElementById("round-rail")!;
+const timelineMarkersEl = document.getElementById("timeline-markers")!;
+const loadModalEl = document.getElementById("load-modal")!;
+const openLoadBtn = document.getElementById("open-load") as HTMLButtonElement;
+const loadCloseBtn = document.getElementById("load-close") as HTMLButtonElement;
+const demoDemNameEl = document.getElementById("demo-dem-name")!;
+const layersToggleBtn = document.getElementById("layers-toggle") as HTMLButtonElement;
+const layersPanelEl = document.getElementById("layers-panel")!;
 const bombHudEl = document.getElementById("bomb-hud")!;
 const legendHelpEl = document.getElementById("legend-help")!;
 const legendRosterEl = document.getElementById("legend-roster")!;
@@ -161,7 +174,6 @@ let pendingComment: { tick: number; round: number; x: number; y: number } | null
 function stopPlayback(): void {
   playing = false;
   playBtn.setAttribute("aria-pressed", "false");
-  playBtn.textContent = "Play";
   cancelAnimationFrame(raf);
   lastFrameTime = 0;
   playAccum = 0;
@@ -221,6 +233,9 @@ function parseFramePlayer(pl: FramePlayerRow): {
   hasBomb: boolean;
   /** World height — `undefined` on rows exported before floor support (length < 10). */
   z: number | undefined;
+  hp: number | undefined;
+  armor: number | undefined;
+  helmet: boolean;
 } {
   const idx = Number(pl[0]);
   const x = Number(pl[1]);
@@ -232,6 +247,9 @@ function parseFramePlayer(pl: FramePlayerRow): {
   let utils: string | undefined;
   let hasBomb = false;
   let z: number | undefined;
+  let hp: number | undefined;
+  let armor: number | undefined;
+  let helmet = false;
   if (pl.length >= 8) {
     const bRaw = pl[5];
     const b =
@@ -249,7 +267,16 @@ function parseFramePlayer(pl: FramePlayerRow): {
     const zRaw = Number(pl[9]);
     z = Number.isFinite(zRaw) ? zRaw : undefined;
   }
-  return { idx, x, y, yaw, team, balance, gun, utils, hasBomb, z };
+  if (pl.length >= 11) {
+    const h = Number(pl[10]);
+    hp = Number.isFinite(h) && h >= 0 ? h : undefined;
+  }
+  if (pl.length >= 12) {
+    const a = Number(pl[11]);
+    armor = Number.isFinite(a) && a >= 0 ? a : undefined;
+  }
+  if (pl.length >= 13 && Number(pl[12]) === 1) helmet = true;
+  return { idx, x, y, yaw, team, balance, gun, utils, hasBomb, z, hp, armor, helmet };
 }
 
 function formatMoney(n: number): string {
@@ -347,6 +374,112 @@ function displayGunLabel(slug: string | undefined): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+const UTIL_TINT: Record<string, string> = {
+  smokegrenade: "#b9c2cf",
+  flashbang: "#f4f1c0",
+  hegrenade: "#9ccf7a",
+  molotov: "#ff7a3a",
+  incgrenade: "#ff7a3a",
+  decoy: "#9aa4b2",
+};
+
+/** Mask-tinted `<span>` for a white SVG icon (colour comes from CSS `color`). */
+function iconSpan(file: string, color: string, title: string, cls = "uico"): string {
+  return `<span class="${cls}" role="img" aria-label="${escapeAttr(title)}" title="${escapeAttr(title)}" style="--ico:url(/weapons/${file}.svg);color:${color}"></span>`;
+}
+
+function utilIconsHtml(utils: string | undefined): string {
+  if (!utils) return "";
+  return utils
+    .split("·")
+    .map((u) => u.trim())
+    .map((u) => ({ u, file: weaponIconFile(u) }))
+    .filter((x): x is { u: string; file: string } => !!x.file)
+    .map(({ u, file }) => iconSpan(file, UTIL_TINT[file] ?? "#9aa4b2", u))
+    .join("");
+}
+
+/** Players killed this round at or before `tick` (from `player_death`). */
+function deadVictimsAt(round: number, tick: number): Set<number> {
+  const dead = new Set<number>();
+  for (const k of data?.kills ?? []) {
+    if (k[1] === round && k[0] <= tick) dead.add(k[3]);
+  }
+  return dead;
+}
+
+/** Running kills/deaths for the whole match up to `tick`. */
+function killTallyAt(tick: number): Map<number, { k: number; d: number }> {
+  const tally = new Map<number, { k: number; d: number }>();
+  const bump = (idx: number, key: "k" | "d"): void => {
+    if (idx < 0) return;
+    const t = tally.get(idx) ?? { k: 0, d: 0 };
+    t[key] += 1;
+    tally.set(idx, t);
+  };
+  for (const k of data?.kills ?? []) {
+    if (k[0] > tick) continue;
+    bump(k[2], "k");
+    bump(k[3], "d");
+  }
+  return tally;
+}
+
+/**
+ * HP shown for a player: exported `health` when present, otherwise estimated as 100 minus the
+ * damage taken so far this round (from `player_hurt`). Returns undefined with neither.
+ */
+function playerHp(p: { idx: number; hp?: number }, round: number, tick: number): number | undefined {
+  if (p.hp !== undefined) return p.hp;
+  const dmg = data?.damages;
+  if (!dmg?.length) return undefined;
+  let taken = 0;
+  for (const d of dmg) {
+    if (d[0] > tick) break;
+    if (d[1] === round && d[3] === p.idx) taken += d[5];
+  }
+  return Math.max(1, 100 - taken);
+}
+
+function hpColor(hp: number): string {
+  return hp > 60 ? "#44cc44" : hp > 30 ? "#e8c030" : "#cc2222";
+}
+
+/** Steam avatars via the dev server's `/steam-avatar` proxy; null/"failed" falls back to the coloured dot. */
+const avatarImgs = new Map<string, HTMLImageElement | "failed">();
+
+function prefetchAvatars(): void {
+  for (const p of data?.players ?? []) {
+    const id = String(p.steamid ?? "");
+    if (!/^\d{17}$/.test(id) || avatarImgs.has(id)) continue;
+    const img = new Image();
+    img.onload = () => render();
+    img.onerror = () => avatarImgs.set(id, "failed");
+    img.src = `/steam-avatar?steamid=${id}`;
+    avatarImgs.set(id, img);
+  }
+}
+
+function avatarFor(idx: number): HTMLImageElement | null {
+  const id = String(data?.players[idx]?.steamid ?? "");
+  const img = avatarImgs.get(id);
+  return img && img !== "failed" && img.complete && img.naturalWidth > 0 ? img : null;
+}
+
+function updateAliveCounts(frame: Frame): void {
+  const dead = deadVictimsAt(frame[1], frame[0]);
+  let ct = 0;
+  let t = 0;
+  for (const pl of frame[2]) {
+    const p = parseFramePlayer(pl);
+    if (dead.has(p.idx)) continue;
+    if (p.team === 3) ct++;
+    else if (p.team === 2) t++;
+  }
+  hudCtAliveEl.textContent = String(ct);
+  hudTAliveEl.textContent = String(t);
+}
+
 function updateLegendRoster(frame: Frame | undefined): void {
   if (!legendRosterEl) return;
   if (!data || !frame) {
@@ -372,7 +505,10 @@ function updateLegendRoster(frame: Frame | undefined): void {
     }
   }
 
-  const banner = `<div class="team-money-banner"><span class="banner-t">T<strong>${anyT ? escapeHtml(formatMoney(sumT)) : "—"}</strong></span><span class="banner-ct">CT<strong>${anyCt ? escapeHtml(formatMoney(sumCt)) : "—"}</strong></span></div>`;
+  const banner = `<div class="team-banners"><div class="bank ct"><small>CT bank</small><b class="num">${anyCt ? escapeHtml(formatMoney(sumCt)) : "—"}</b></div><div class="bank t"><small>T bank</small><b class="num">${anyT ? escapeHtml(formatMoney(sumT)) : "—"}</b></div></div>`;
+
+  const dead = deadVictimsAt(frame[1], frame[0]);
+  const tally = killTallyAt(frame[0]);
 
   const byTeam = new Map<number, typeof parsed>();
   for (const p of parsed) {
@@ -382,21 +518,34 @@ function updateLegendRoster(frame: Frame | undefined): void {
   }
 
   const parts: string[] = [banner];
-  for (const team of [...byTeam.keys()].sort()) {
-    const label = team === 2 ? "T" : team === 3 ? "CT" : `Team ${team}`;
-    parts.push(`<h2>${escapeHtml(label)}</h2><ul>`);
-    for (const p of (byTeam.get(team) ?? []).sort((a, b) => a.idx - b.idx)) {
+  // CT first, then T, then anything else.
+  const teamOrder = [...byTeam.keys()].sort((a, b) => (a === 3 ? -1 : b === 3 ? 1 : a - b));
+  for (const team of teamOrder) {
+    const label = team === 2 ? "Terrorists" : team === 3 ? "Counter-Terrorists" : `Team ${team}`;
+    const col = teamColor(team);
+    const members = (byTeam.get(team) ?? []).sort((a, b) => a.idx - b.idx);
+    const alive = members.filter((m) => !dead.has(m.idx)).length;
+    parts.push(
+      `<div class="team-h"><span class="tag"><i style="background:${col}"></i>${escapeHtml(label)}</span><span>${alive} alive</span></div>`,
+    );
+    for (const p of members) {
       const name = data.players[p.idx]?.name ?? `#${p.idx}`;
-      const col = teamColor(team);
-      const cash =
-        p.balance !== undefined ? formatMoney(p.balance) : "—";
-      const gunEsc = escapeHtml(displayGunLabel(p.gun));
-      const utilsEsc = p.utils ? escapeHtml(p.utils) : "—";
+      const cash = p.balance !== undefined ? formatMoney(p.balance) : "—";
+      const gunFile = weaponIconFile(p.gun);
+      const gun =
+        (gunFile ? iconSpan(gunFile, "#c3cad4", p.gun ?? "", "uico uico--gun") : "") +
+        escapeHtml(displayGunLabel(p.gun));
+      const kd = tally.get(p.idx) ?? { k: 0, d: 0 };
+      const bomb = p.hasBomb ? iconSpan("c4", "#ffba48", "Bomb carrier") : "";
+      const hp = playerHp(p, frame[1], frame[0]);
+      const hpHtml =
+        hp !== undefined
+          ? `<span class="hp"><span class="hpbar"><i style="width:${hp}%;background:${hpColor(hp)}"></i>${p.armor ? `<i class="ar" style="width:${Math.min(100, p.armor)}%"></i>` : ""}</span><b class="num">${hp}</b></span>`
+          : "";
       parts.push(
-        `<li class="roster-line"><div class="roster-top"><span class="swatch" style="background:${col}"></span><span class="roster-name">${escapeHtml(name)}</span><span class="roster-cash">${escapeHtml(cash)}</span></div><div class="roster-loadout"><span class="gun">${gunEsc}</span> · <span class="utils">${utilsEsc}</span></div></li>`,
+        `<div class="pl${dead.has(p.idx) ? " dead" : ""}"><span class="dot" style="background:${col}"></span><span class="nm"><span>${escapeHtml(name)}</span><span class="ic">${bomb}${utilIconsHtml(p.utils)}</span></span><span class="cash num">${escapeHtml(cash)}</span><span class="gun">${gun}</span><span class="kda num">${kd.k} / ${kd.d}</span>${hpHtml}</div>`,
       );
     }
-    parts.push("</ul>");
   }
   legendRosterEl.innerHTML = parts.join("");
 }
@@ -677,9 +826,9 @@ function drawMapLayout(): void {
       ctx.fillStyle = "rgba(10,12,15,0.72)";
       ctx.fillRect(8, 8, 280, 44);
       ctx.fillStyle = "rgba(230,235,245,0.9)";
-      ctx.font = "600 12px Segoe UI, system-ui, sans-serif";
+      ctx.font = "600 12px Inter, Segoe UI, system-ui, sans-serif";
       ctx.fillText(data.mapName.toUpperCase() + " · overview PNG", 16, 26);
-      ctx.font = "10px Segoe UI, system-ui, sans-serif";
+      ctx.font = "10px Inter, Segoe UI, system-ui, sans-serif";
       ctx.fillStyle = "rgba(200,206,220,0.75)";
       ctx.fillText("Geometry from resource/overviews/<map>.txt · PNG in public/map or public/maps", 16, 42);
     }
@@ -714,9 +863,9 @@ function drawMapLayout(): void {
 
   if (data) {
     ctx.fillStyle = "rgba(230,235,245,0.55)";
-    ctx.font = "600 13px Segoe UI, system-ui, sans-serif";
+    ctx.font = "600 13px Inter, Segoe UI, system-ui, sans-serif";
     ctx.fillText(data.mapName.toUpperCase(), 12, 22);
-    ctx.font = "11px Segoe UI, system-ui, sans-serif";
+    ctx.font = "11px Inter, Segoe UI, system-ui, sans-serif";
     ctx.fillStyle = "rgba(200,206,220,0.45)";
     ctx.fillText("World X/Y · auto-fit to players + weapon_fire beams", 12, 40);
     const b = bbox;
@@ -762,6 +911,141 @@ function drawGunshots(frameTick: number): void {
   }
 }
 
+type GrenadeFlight = {
+  t0: number;
+  t1: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  slug: string;
+};
+
+const FLIGHT_MAX_SEC = 4;
+let grenadeFlights: GrenadeFlight[] = [];
+/** Per `data.utilities` row: 1 when a pop was paired with it (beam fallback skipped for those). */
+let throwMatched: Uint8Array = new Uint8Array(0);
+
+/** Pair each detonation with the latest unmatched same-type throw by the same thrower. */
+function buildGrenadeFlights(): void {
+  grenadeFlights = [];
+  const utils = data?.utilities;
+  throwMatched = new Uint8Array(utils?.length ?? 0);
+  if (!data || !utils?.length) return;
+  const maxTicks = Math.ceil(data.tickRate * FLIGHT_MAX_SEC);
+  const groups: [readonly GrenadePopTuple[] | undefined, readonly string[]][] = [
+    [data.smokePops, ["smokegrenade"]],
+    [data.hePops, ["hegrenade"]],
+    [data.flashPops, ["flashbang"]],
+    [data.molotovPools, ["molotov", "incgrenade"]],
+  ];
+  for (const [pops, slugs] of groups) {
+    if (!pops) continue;
+    for (const [pt, px, py, thrower] of pops) {
+      let best = -1;
+      for (let i = lowerBoundBy(utils, pt - maxTicks, (u) => u[0]); i < utils.length; i++) {
+        const u = utils[i] as readonly (number | string)[];
+        if (Number(u[0]) > pt) break;
+        if (throwMatched[i]) continue;
+        if (!slugs.includes(String(u[4]))) continue;
+        if (thrower >= 0 && Number(u[3]) !== thrower) continue;
+        best = i;
+      }
+      if (best < 0) continue;
+      throwMatched[best] = 1;
+      const u = utils[best] as readonly (number | string)[];
+      grenadeFlights.push({
+        t0: Number(u[0]),
+        t1: pt,
+        x0: Number(u[1]),
+        y0: Number(u[2]),
+        x1: px,
+        y1: py,
+        slug: String(u[4]),
+      });
+    }
+  }
+  grenadeFlights.sort((a, b) => a.t0 - b.t0);
+}
+
+/** Same colours as the reference viewer's grenade paths. */
+const GRENADE_PATH_COLOR: Record<string, string> = {
+  smoke: "rgba(206, 211, 222, 0.9)",
+  fire: "rgba(255, 120, 30, 0.9)",
+  he: "rgba(255, 90, 60, 0.9)",
+  flash: "rgba(255, 238, 170, 0.9)",
+};
+
+function grenadeKindFromSlug(slug: string): string {
+  if (slug === "smokegrenade") return "smoke";
+  if (slug === "hegrenade") return "he";
+  if (slug === "flashbang") return "flash";
+  return "fire";
+}
+
+/**
+ * Thrown grenade: dashed path from the throw spot with a slight sideways bow, and the grenade
+ * icon riding the head until it lands (reference viewer style).
+ */
+function drawGrenadeFlights(tick: number): void {
+  if (!data || !grenadeFlights.length || !showUtilitiesEl.checked) return;
+  const tr = data.tickRate;
+  const tail = Math.ceil(tr * 0.25);
+  const lo = lowerBoundBy(grenadeFlights, tick - Math.ceil(tr * FLIGHT_MAX_SEC) - tail, (f) => f.t0);
+  for (let i = lo; i < grenadeFlights.length; i++) {
+    const f = grenadeFlights[i];
+    if (f.t0 > tick) break;
+    if (tick > f.t1 + tail) continue;
+    const kind = grenadeKindFromSlug(f.slug);
+    const a = worldXYToCanvas(f.x0, f.y0);
+    const z = worldXYToCanvas(f.x1, f.y1);
+    const inFlight = tick <= f.t1;
+    const p = inFlight ? (tick - f.t0) / Math.max(1, f.t1 - f.t0) : 1;
+    const e = 1 - Math.pow(1 - p, 1.6);
+
+    const len = Math.hypot(z.x - a.x, z.y - a.y) || 1;
+    const nx = -(z.y - a.y) / len;
+    const ny = (z.x - a.x) / len;
+    const bow = Math.min(len * 0.04, 14);
+    const at = (t: number): { x: number; y: number } => {
+      const o = Math.sin(Math.PI * t) * bow;
+      return { x: a.x + (z.x - a.x) * t + nx * o, y: a.y + (z.y - a.y) * t + ny * o };
+    };
+    const steps = Math.max(2, Math.ceil(e * 20));
+    const head = at(e);
+
+    ctx.save();
+    ctx.strokeStyle = GRENADE_PATH_COLOR[kind] ?? "rgba(220,224,232,0.9)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    for (let k = 1; k <= steps; k++) {
+      const q = at((e * k) / steps);
+      ctx.lineTo(q.x, q.y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const icon = inFlight ? loadIcon(f.slug) : null;
+    if (inFlight && icon) {
+      const h = clampNum(worldRadiusToCanvasPx(34), 12, 20);
+      const w = (h * icon.naturalWidth) / icon.naturalHeight;
+      ctx.fillStyle = "rgba(7, 8, 12, 0.6)";
+      ctx.beginPath();
+      ctx.roundRect(head.x - w / 2 - 2, head.y - h / 2 - 1.5, w + 4, h + 3, 2);
+      ctx.fill();
+      ctx.drawImage(icon, head.x - w / 2, head.y - h / 2, w, h);
+    } else if (inFlight) {
+      ctx.fillStyle = GRENADE_PATH_COLOR[kind] ?? "#dee2ea";
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 function drawUtilityThrows(frameTick: number): void {
   if (!data?.utilities?.length || !showUtilitiesEl.checked) return;
   const win = beamFadeWindowTicks();
@@ -772,6 +1056,7 @@ function drawUtilityThrows(frameTick: number): void {
     const s = utilities[i] as UtilityTuple;
     const tick = s[0];
     if (tick > frameTick) break;
+    if (throwMatched[i]) continue;
     const age = frameTick - tick;
     const strength = Math.max(0, 1 - age / win);
     if (strength <= 0) continue;
@@ -784,40 +1069,200 @@ function drawUtilityThrows(frameTick: number): void {
   }
 }
 
-function drawSmokeCountdownDisk(
-  cx: number,
-  cy: number,
-  radPx: number,
-  remainingSec: number,
-): void {
-  const secLeft = Math.max(0, remainingSec);
-  const label = String(Math.ceil(secLeft - 1e-9));
+/**
+ * Smoke / molotov / HE / flash rendering, ported from the reference viewer (`../cs2`):
+ *  - smoke + fire are cached offscreen sprites (blobby outline / additive flame blobs), drawn
+ *    at 144 / 150 world units with a compact depleting timer ring on top;
+ *  - HE is a fading ring, flash is a fading white disc;
+ */
+const SMOKE_PAINT_R_WORLD_U = 144;
+const FIRE_PAINT_R_WORLD_U = 150;
+const HE_RING_SEC = 0.65;
+const FLASH_FLASH_SEC = 0.42;
+const MOLOTOV_LIFETIME_SEC = 7.5;
 
-  ctx.save();
-  ctx.fillStyle = "rgba(255,255,255,0.94)";
-  ctx.strokeStyle = "rgba(32,36,46,0.92)";
-  ctx.lineWidth = Math.max(1.5, radPx * 0.06);
-  ctx.beginPath();
-  ctx.arc(cx, cy, radPx, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+const clampNum = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
 
-  const fs = Math.max(11, Math.min(28, radPx * 0.52));
-  ctx.font = `700 ${fs}px Segoe UI, system-ui, sans-serif`;
-  ctx.fillStyle = "#161a22";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, cx, cy);
-  ctx.restore();
+function seededRand(seed: number): (n: number) => number {
+  return (n) => {
+    const d = Math.sin(n * 12.9898 + seed * 78.233) * 43758.5453;
+    return d - Math.floor(d);
+  };
 }
 
-/** Performance mode: skip radial-gradient FX for HE/flash/molotov in favor of a flat disk. */
-function drawFlatCircle(cx: number, cy: number, r: number, color: string, alpha: number): void {
+/** Offscreen sprites, cached per (kind, seed, 1/12s bucket) so blur + gradients are not redone every frame. */
+const FX_SPRITE_R = 150;
+const FX_SPRITE_PAD = 1.3;
+const FX_SPRITES_PER_SEC = 12;
+const fxSpriteCache = new Map<string, HTMLCanvasElement>();
+
+function fxSprite(kind: "smoke" | "fire", seed: number, tSec: number): HTMLCanvasElement {
+  const bucket = Math.floor(tSec * FX_SPRITES_PER_SEC);
+  const key = `${kind}|${seed.toFixed(4)}|${bucket}`;
+  let cv = fxSpriteCache.get(key);
+  if (cv) return cv;
+  if (fxSpriteCache.size > 96) fxSpriteCache.clear();
+  const size = Math.ceil(FX_SPRITE_R * 2 * FX_SPRITE_PAD);
+  cv = document.createElement("canvas");
+  cv.width = size;
+  cv.height = size;
+  const g = cv.getContext("2d");
+  if (g) {
+    const c = size / 2;
+    const t = bucket / FX_SPRITES_PER_SEC;
+    if (kind === "smoke") paintSmokeSprite(g, c, c, FX_SPRITE_R, t, seed);
+    else paintFireSprite(g, c, c, FX_SPRITE_R, t, seed);
+  }
+  fxSpriteCache.set(key, cv);
+  return cv;
+}
+
+/** Wobbling blob outline (34 pts), soft inner puffs, blurred. */
+function paintSmokeSprite(
+  g: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  R: number,
+  t: number,
+  seed: number,
+): void {
+  const rnd = seededRand(seed);
+  const N = 34;
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const w = 0.86 + 0.12 * rnd(i + 7) + 0.03 * Math.sin(t * 1.8 + i * 0.5 + seed);
+    pts.push({ x: cx + Math.cos(a) * R * w, y: cy + Math.sin(a) * R * w });
+  }
+  const outline = (): void => {
+    g.beginPath();
+    g.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i].x, pts[i].y);
+    g.closePath();
+  };
+  g.save();
+  g.filter = `blur(${clampNum(R * 0.06, 2, 7)}px)`;
+  const grad = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+  grad.addColorStop(0, "rgba(220,224,232,0.46)");
+  grad.addColorStop(0.7, "rgba(208,213,224,0.34)");
+  grad.addColorStop(1, "rgba(206,211,222,0.04)");
+  g.fillStyle = grad;
+  outline();
+  g.fill();
+  for (let i = 0; i < 7; i++) {
+    const a = rnd(i + 50) * Math.PI * 2 + t * 0.12;
+    const d = R * (0.1 + 0.42 * rnd(i + 80));
+    const px = cx + Math.cos(a) * d;
+    const py = cy + Math.sin(a) * d;
+    const pr = R * (0.28 + 0.22 * rnd(i + 90));
+    const pg = g.createRadialGradient(px, py, 0, px, py, pr);
+    pg.addColorStop(0, "rgba(230,234,242,0.2)");
+    pg.addColorStop(1, "rgba(220,224,232,0)");
+    g.fillStyle = pg;
+    g.beginPath();
+    g.arc(px, py, pr, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.filter = "blur(1.5px)";
+  g.strokeStyle = "rgba(228,232,240,0.4)";
+  g.lineWidth = 1.5;
+  outline();
+  g.stroke();
+  g.restore();
+}
+
+/**
+ * Fire pool: soft glow plus stacked, flickering flame-tongue polygons (dark red outer to pale
+ * yellow core), blurred together — no discrete blobs.
+ */
+function paintFireSprite(
+  g: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  R: number,
+  t: number,
+  seed: number,
+): void {
+  const rnd = seededRand(seed);
+  g.save();
+  const base = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+  base.addColorStop(0, "rgba(255,120,30,0.30)");
+  base.addColorStop(0.7, "rgba(220,70,20,0.18)");
+  base.addColorStop(1, "rgba(180,40,10,0)");
+  g.fillStyle = base;
+  g.beginPath();
+  g.arc(cx, cy, R, 0, Math.PI * 2);
+  g.fill();
+
+  const layers: { scale: number; color: string; lighter: boolean }[] = [
+    { scale: 1.0, color: "rgba(190,45,10,0.36)", lighter: false },
+    { scale: 0.8, color: "rgba(255,105,25,0.34)", lighter: true },
+    { scale: 0.58, color: "rgba(255,165,45,0.34)", lighter: true },
+    { scale: 0.32, color: "rgba(255,225,130,0.36)", lighter: true },
+  ];
+  g.filter = `blur(${clampNum(R * 0.045, 3, 7)}px)`;
+  const N = 44;
+  layers.forEach((layer, li) => {
+    g.globalCompositeOperation = layer.lighter ? "lighter" : "source-over";
+    g.fillStyle = layer.color;
+    g.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const k = i % N;
+      const a = (k / N) * Math.PI * 2;
+      // alternating tongue / valley radius, seeded per layer, flickering over time
+      const tongue = 0.9 + 0.1 * Math.sin(k * 2.1 + seed);
+      const r =
+        R *
+        layer.scale *
+        tongue *
+        (0.84 + 0.14 * rnd(k + li * 19 + 3) + 0.07 * Math.sin(t * 7 + k * 0.9 + li * 2 + seed));
+      const x = cx + Math.cos(a) * r;
+      const y = cy + Math.sin(a) * r;
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
+    g.closePath();
+    g.fill();
+  });
+  g.restore();
+}
+
+/**
+ * Timer for smoke / molotov: a thin arc just outside the cloud that depletes clockwise (so the
+ * cloud's own edge stays visible), with the seconds left centred inside.
+ */
+function drawCountdownRing(
+  cx: number,
+  cy: number,
+  effectRadPx: number,
+  remainingSec: number,
+  totalSec: number,
+  color: string,
+): void {
+  const frac = clampNum(remainingSec / totalSec, 0, 1);
+  const rr = effectRadPx * 1.1 + 2;
   ctx.save();
-  ctx.fillStyle = color.replace("ALPHA", alpha.toFixed(2));
+  ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(0,0,0,0.4)";
+  ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+  ctx.stroke();
+  const label = String(Math.max(0, Math.ceil(remainingSec - 1e-9)));
+  ctx.font = "700 11px Inter, Segoe UI, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(8,10,16,0.85)";
+  ctx.strokeText(label, cx, cy + 0.5);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(label, cx, cy + 0.5);
   ctx.restore();
 }
 
@@ -827,83 +1272,106 @@ function drawGrenadeFxLayer(frameTick: number): void {
 
   function sweep(
     pops: readonly GrenadePopTuple[] | undefined,
-    winTicks: number,
-    draw: (wx: number, wy: number, u: number, age: number, detTick: number) => void,
+    fromTick: number,
+    draw: (wx: number, wy: number, age: number) => void,
   ): void {
     if (!pops?.length) return;
-    const lo = lowerBoundBy(pops, frameTick - winTicks, (p) => p[0]);
-    for (let i = lo; i < pops.length; i++) {
+    for (let i = lowerBoundBy(pops, fromTick, (p) => p[0]); i < pops.length; i++) {
       const row = pops[i];
-      const t = row[0];
-      if (t > frameTick) break;
-      const age = frameTick - t;
-      const u = Math.max(0, 1 - age / winTicks);
-      if (u <= 0) continue;
-      draw(row[1], row[2], u, age, t);
+      if (row[0] > frameTick) break;
+      draw(row[1], row[2], frameTick - row[0]);
     }
   }
 
-  const smokeWinTicks = Math.ceil(tr * SMOKE_LIFETIME_SEC);
-  sweep(data.smokePops, smokeWinTicks, (wx, wy, _u, age, _detTick) => {
+  const smokeTicks = Math.ceil(tr * SMOKE_LIFETIME_SEC);
+  const moloTicks = Math.ceil(tr * MOLOTOV_LIFETIME_SEC);
+  const heTicks = Math.ceil(tr * HE_RING_SEC);
+  const flashTicks = Math.ceil(tr * FLASH_FLASH_SEC);
+
+  // Live effects (nothing is left behind once an effect ends).
+  sweep(data.smokePops, frameTick - smokeTicks, (wx, wy, age) => {
+    if (age > smokeTicks) return;
     const c = worldXYToCanvas(wx, wy);
-    const radPx = worldRadiusToCanvasPx(SMOKE_MARKER_RADIUS_WORLD_U);
-    const remainingTicks = smokeWinTicks - age;
-    const remainingSec = remainingTicks / tr;
-    drawSmokeCountdownDisk(c.x, c.y, radPx, remainingSec);
+    const radPx = worldRadiusToCanvasPx(SMOKE_PAINT_R_WORLD_U);
+    const fadeOut = clampNum((smokeTicks - age) / tr / 0.5, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = fadeOut;
+    if (perfMode) {
+      ctx.fillStyle = "rgba(210,215,226,0.4)";
+      ctx.strokeStyle = "rgba(228,232,240,0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, radPx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      const A = radPx * FX_SPRITE_PAD;
+      const sp = fxSprite("smoke", wx * 0.011 + wy * 0.015, age / tr);
+      ctx.drawImage(sp, c.x - A, c.y - A, A * 2, A * 2);
+      ctx.globalAlpha = 0.6 * fadeOut;
+      ctx.drawImage(sp, c.x - A, c.y - A, A * 2, A * 2);
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = fadeOut;
+    drawCountdownRing(c.x, c.y, radPx, (smokeTicks - age) / tr, SMOKE_LIFETIME_SEC, "rgba(232,236,244,0.95)");
+    ctx.restore();
   });
 
-  sweep(data.hePops, Math.ceil(tr * 0.65), (wx, wy, u, _age, _detTick) => {
+  sweep(data.molotovPools, frameTick - moloTicks, (wx, wy, age) => {
+    if (age > moloTicks) return;
     const c = worldXYToCanvas(wx, wy);
-    const radPx = worldRadiusToCanvasPx(78) * (0.55 + 0.45 * u);
-    if (perfMode) {
-      drawFlatCircle(c.x, c.y, radPx, "rgba(255,115,48,ALPHA)", 0.22 * u);
-      return;
-    }
+    const radPx = worldRadiusToCanvasPx(FIRE_PAINT_R_WORLD_U);
+    const fadeOut = clampNum((moloTicks - age) / tr / 0.4, 0, 1);
     ctx.save();
-    ctx.strokeStyle = `rgba(255,150,72,${0.42 * u})`;
-    ctx.lineWidth = 2;
+    ctx.globalAlpha = fadeOut;
+    if (perfMode) {
+      ctx.fillStyle = "rgba(230,90,25,0.32)";
+      ctx.strokeStyle = "rgba(255,140,40,0.7)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, radPx, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      const A = radPx * FX_SPRITE_PAD;
+      const sp = fxSprite("fire", wx * 0.013 + wy * 0.017, age / tr);
+      ctx.drawImage(sp, c.x - A, c.y - A, A * 2, A * 2);
+      ctx.globalAlpha = 0.8 * fadeOut;
+      ctx.drawImage(sp, c.x - A, c.y - A, A * 2, A * 2);
+    }
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = fadeOut;
+    drawCountdownRing(c.x, c.y, radPx, (moloTicks - age) / tr, MOLOTOV_LIFETIME_SEC, "rgba(255,150,60,0.98)");
+    ctx.restore();
+  });
+
+  // HE: expanding ring that fades out.
+  sweep(data.hePops, frameTick - heTicks, (wx, wy, age) => {
+    if (age > heTicks) return;
+    const z = clampNum(age / heTicks, 0, 1);
+    const c = worldXYToCanvas(wx, wy);
+    ctx.save();
+    ctx.globalAlpha = 1 - z;
+    ctx.strokeStyle = "#ffb020";
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
-    ctx.arc(c.x, c.y, radPx, 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, worldRadiusToCanvasPx(60) * (0.6 + z * 0.8), 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = `rgba(255,115,48,${0.08 * u})`;
-    ctx.fill();
     ctx.restore();
   });
 
-  sweep(data.flashPops, Math.ceil(tr * 0.42), (wx, wy, u, _age, _detTick) => {
+  // Flash: white disc that fades out.
+  sweep(data.flashPops, frameTick - flashTicks, (wx, wy, age) => {
+    if (age > flashTicks) return;
+    const z = clampNum(age / flashTicks, 0, 1);
     const c = worldXYToCanvas(wx, wy);
-    const radPx = worldRadiusToCanvasPx(42) * (0.5 + 0.5 * u);
-    if (perfMode) {
-      drawFlatCircle(c.x, c.y, radPx * 1.35, "rgba(255,238,160,ALPHA)", 0.22 * u);
-      return;
-    }
     ctx.save();
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radPx * 1.35);
-    g.addColorStop(0, `rgba(255,252,230,${0.32 * u})`);
-    g.addColorStop(0.35, `rgba(255,238,160,${0.12 * u})`);
-    g.addColorStop(1, "rgba(255,220,120,0)");
-    ctx.fillStyle = g;
+    ctx.globalAlpha = (1 - z) * 0.7;
+    ctx.fillStyle = "#ffffff";
     ctx.beginPath();
-    ctx.arc(c.x, c.y, radPx * 1.35, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  });
-
-  sweep(data.molotovPools, Math.ceil(tr * 7.5), (wx, wy, u, _age, _detTick) => {
-    const c = worldXYToCanvas(wx, wy);
-    const radPx = worldRadiusToCanvasPx(68) * (0.65 + 0.35 * Math.sqrt(u));
-    if (perfMode) {
-      drawFlatCircle(c.x, c.y, radPx, "rgba(255,82,28,ALPHA)", 0.15);
-      return;
-    }
-    ctx.save();
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, radPx);
-    g.addColorStop(0, `rgba(255,132,48,${0.16 * u})`);
-    g.addColorStop(0.55, `rgba(255,82,28,${0.1 * u})`);
-    g.addColorStop(1, "rgba(180,40,12,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, radPx, 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, worldRadiusToCanvasPx(70), 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   });
@@ -971,13 +1439,50 @@ function drawPlayers(frame: Frame | undefined): void {
   const droppedBomb = activeDroppedBomb(ftick);
 
   for (const pl of players) {
-    const { idx, x, y, yaw, team, hasBomb } = parseFramePlayer(pl);
+    const { idx, x, y, yaw, team, hasBomb, hp } = parseFramePlayer(pl);
     const { x: cx, y: cy } = worldXYToCanvas(x, y);
     const col = teamColor(team);
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-    ctx.fill();
+
+    // Vision cone (±35° around the aim direction).
+    {
+      const f = aimForwardWorldXY(yaw, undefined);
+      const t = worldXYToCanvas(x + f.dx * arrowWorldLen, y + f.dy * arrowWorldLen);
+      const ang = Math.atan2(t.y - cy, t.x - cx);
+      const rad = Math.hypot(t.x - cx, t.y - cy) * 2.4;
+      const half = (35 * Math.PI) / 180;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, rad, ang - half, ang + half);
+      ctx.closePath();
+      const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      cg.addColorStop(0, `${col}59`);
+      cg.addColorStop(1, `${col}00`);
+      ctx.fillStyle = cg;
+      ctx.fill();
+      ctx.restore();
+    }
+
+    const avatar = avatarFor(idx);
+    if (avatar) {
+      const r = 8.5;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(avatar, cx - r, cy - r, r * 2, r * 2);
+      ctx.restore();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     if (hasBomb && !plantedBomb && !droppedBomb) {
       ctx.save();
@@ -1001,16 +1506,28 @@ function drawPlayers(frame: Frame | undefined): void {
     ctx.lineTo(tip.x, tip.y);
     ctx.stroke();
 
+    const hpShown = hp ?? playerHp({ idx }, frame[1], ftick);
+    if (hpShown !== undefined) {
+      const bw = 20;
+      const bh = 3;
+      const bx = cx - bw / 2;
+      const by = cy + 9;
+      ctx.fillStyle = "rgba(10,12,16,0.85)";
+      ctx.fillRect(bx - 0.5, by - 0.5, bw + 1, bh + 1);
+      ctx.fillStyle = hpColor(hpShown);
+      ctx.fillRect(bx, by, (bw * Math.max(0, Math.min(100, hpShown))) / 100, bh);
+    }
+
     if (data) {
       const name = data.players[idx]?.name ?? `#${idx}`;
-      ctx.font = "bold 11px Segoe UI, system-ui, sans-serif";
+      ctx.font = "bold 11px Inter, Segoe UI, system-ui, sans-serif";
       ctx.fillStyle = "rgba(232,234,237,0.92)";
       ctx.fillText(name, cx + 9, cy + 4);
 
       if (showPositionsEl.checked) {
         const posName = getPositionName(data.mapName, x, y);
         if (posName) {
-          ctx.font = "9px Segoe UI, system-ui, sans-serif";
+          ctx.font = "9px Inter, Segoe UI, system-ui, sans-serif";
           ctx.fillStyle = "rgba(160,185,220,0.78)";
           ctx.fillText(posName, cx + 9, cy + 15);
         }
@@ -1036,7 +1553,7 @@ function drawBombLayer(frame: Frame | undefined): void {
     ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    ctx.font = "600 11px Segoe UI, system-ui, sans-serif";
+    ctx.font = "600 11px Inter, Segoe UI, system-ui, sans-serif";
     ctx.fillStyle = "rgba(255,238,238,0.96)";
     ctx.textBaseline = "middle";
     ctx.fillText(`${Math.max(0, sec).toFixed(1)}s`, c.x + r + 6, c.y);
@@ -1120,6 +1637,7 @@ function drawFrame(frame: Frame | undefined): void {
   drawHeatmapOverlay();
   const tick = frame?.[0] ?? 0;
   drawUtilityThrows(tick);
+  drawGrenadeFlights(tick);
   drawGunshots(tick);
   drawGrenadeFxLayer(tick);
   drawPlayers(frame);
@@ -1243,16 +1761,14 @@ function updateReadout(): void {
     phase.kind === "timeline_live" || phase.kind === "timeline_freeze"
       ? phase.round
       : round;
-  const betweenNote =
-    phase.kind === "timeline_between"
-      ? " · between rounds"
-      : phase.kind === "timeline_freeze"
-        ? " · freeze"
-        : "";
   const t = tick / data.tickRate;
   const roundLeft = roundRemainingSeconds(frameIndex);
   // total_rounds_played is 0-indexed (rounds completed so far); humans count rounds from 1.
-  timeReadout.textContent = `Round ${displayRound + 1} · ${formatTime(roundLeft)} left${betweenNote} · tick ${tick} · demo ${formatTime(t)}`;
+  timeReadout.textContent = `tick ${tick} · demo ${formatTime(t)}`;
+  hudClockEl.textContent = formatTime(roundLeft);
+  hudRoundEl.textContent = `ROUND ${displayRound + 1}`;
+  updateAliveCounts(frame);
+  updateRoundRailActive(displayRound);
 }
 
 function render(): void {
@@ -1260,13 +1776,17 @@ function render(): void {
     ctx.fillStyle = "#0e1116";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "rgba(200,206,220,0.58)";
-    ctx.font = "14px Segoe UI, system-ui, sans-serif";
+    ctx.font = "14px Inter, Segoe UI, system-ui, sans-serif";
     ctx.fillText(
       "Pick a .dem (Export & load with npm run dev), bundled demo + Load, or open JSON.",
       22,
       36,
     );
     timeReadout.textContent = "";
+    hudClockEl.textContent = "–:––";
+    hudRoundEl.textContent = "";
+    hudCtAliveEl.textContent = "–";
+    hudTAliveEl.textContent = "–";
     bombHudEl.textContent = "";
     legendHelpEl.innerHTML = "";
     legendRosterEl.innerHTML = "";
@@ -1302,7 +1822,7 @@ function buildLegend(): void {
   }
 
   legendHelpEl.innerHTML =
-    `<div class="legend-note"><strong>Project layout:</strong> helper code lives under <code>src/utils/</code>; it isn’t rendered on the canvas.<br/><br/>${mapImgHelp}<strong>Roster panel:</strong> team cash totals + per-player money, active gun, and grenades when exported from a current <code>.dem</code>. A lone em dash (—) means missing data: old JSON without economy rows (re-export), demo/parser skipped that field on some ticks, no grenades in <code>inventory</code>, or no equipped weapon name on that sample.<br/><br/><strong>Bomb:</strong> green ring = carrier (<code>inventory</code> C4); amber diamond = dropped; red disk + fuse = planted (${BOMB_FUSE_SEC}s fuse cap; ends sooner if demo records explode/defuse). Re-export JSON for bomb fields.<br/><br/><strong>Round clock:</strong> Uses <code>roundClockStarts</code> + <code>roundEndsHud</code>: live countdown after <code>round_freeze_end</code>; buy-time freeze shows <strong>1:55 · freeze</strong> (not confused with post-win <strong>0:00 · between rounds</strong>). Older JSON without <code>roundEndsHud</code> falls back to frame-based timing (re-export).<br/><br/><strong>Gunshots:</strong> slim white beams from <code>weapon_fire</code> (ballistic only).<br/><br/><strong>Utilities:</strong> tinted throw beams.<br/><br/><strong>Effects:</strong> smoke = white disk with seconds left (viewer window ${SMOKE_LIFETIME_SEC}s); HE / flash / molotov from detonation events. Gold halo = flashed player when <code>player_blind</code> is exported.</div>`;
+    `<div class="legend-note"><strong>Project layout:</strong> helper code lives under <code>src/utils/</code>; it isn’t rendered on the canvas.<br/><br/>${mapImgHelp}<strong>Roster panel:</strong> team cash totals + per-player money, active gun, and grenades when exported from a current <code>.dem</code>. A lone em dash (—) means missing data: old JSON without economy rows (re-export), demo/parser skipped that field on some ticks, no grenades in <code>inventory</code>, or no equipped weapon name on that sample.<br/><br/><strong>Bomb:</strong> green ring = carrier (<code>inventory</code> C4); amber diamond = dropped; red disk + fuse = planted (${BOMB_FUSE_SEC}s fuse cap; ends sooner if demo records explode/defuse). Re-export JSON for bomb fields.<br/><br/><strong>Round clock:</strong> Uses <code>roundClockStarts</code> + <code>roundEndsHud</code>: live countdown after <code>round_freeze_end</code>; buy-time freeze shows <strong>1:55 · freeze</strong> (not confused with post-win <strong>0:00 · between rounds</strong>). Older JSON without <code>roundEndsHud</code> falls back to frame-based timing (re-export).<br/><br/><strong>Gunshots:</strong> slim white beams from <code>weapon_fire</code> (ballistic only).<br/><br/><strong>Utilities:</strong> dashed throw paths with a projectile marker to the landing spot.<br/><br/><strong>Effects:</strong> smoke = soft cloud with a countdown ring (viewer window ${SMOKE_LIFETIME_SEC}s); HE / flash / molotov from detonation events. Gold halo = flashed player when <code>player_blind</code> is exported.</div>`;
 }
 
 function pct(n: number): string {
@@ -1877,7 +2397,7 @@ function renderCommentMarkers(round: number): void {
     coachCtx.fill();
     coachCtx.stroke();
     coachCtx.fillStyle = "rgba(10,12,15,0.95)";
-    coachCtx.font = "700 9px Segoe UI, system-ui, sans-serif";
+    coachCtx.font = "700 9px Inter, Segoe UI, system-ui, sans-serif";
     coachCtx.textAlign = "center";
     coachCtx.textBaseline = "middle";
     coachCtx.fillText("!", x, y + 1);
@@ -1963,7 +2483,6 @@ function tickPlayback(ts: number): void {
         if (!data?.frames.length || frameIndex >= data.frames.length - 1) return;
         playing = true;
         playBtn.setAttribute("aria-pressed", "true");
-        playBtn.textContent = "Pause";
         raf = requestAnimationFrame(tickPlayback);
       }, AUTO_ADVANCE_PAUSE_MS);
       return;
@@ -1973,7 +2492,6 @@ function tickPlayback(ts: number): void {
   if (frameIndex >= data.frames.length - 1) {
     playing = false;
     playBtn.setAttribute("aria-pressed", "false");
-    playBtn.textContent = "Play";
     lastFrameTime = 0;
     playAccum = 0;
     return;
@@ -1985,7 +2503,6 @@ playBtn.addEventListener("click", () => {
   if (!data?.frames.length) return;
   playing = !playing;
   playBtn.setAttribute("aria-pressed", playing ? "true" : "false");
-  playBtn.textContent = playing ? "Pause" : "Play";
   cancelAnimationFrame(raf);
   lastFrameTime = 0;
   playAccum = 0;
@@ -2531,6 +3048,8 @@ async function applyDemoPayload(
   stopPlayback();
   errorEl.hidden = true;
   data = parsed;
+  buildGrenadeFlights();
+  prefetchAvatars();
 
   const baseOverview = getMapOverview(data.mapName);
   overviewImage = baseOverview ? await tryLoadOverviewImage(data.mapName) : null;
@@ -2559,8 +3078,16 @@ async function applyDemoPayload(
   bbox = bb ?? defaultBBox;
 
   scrub.max = String(Math.max(0, data.frames.length - 1));
-  scrub.value = "0";
-  frameIndex = 0;
+  // Start at the first live round rather than warmup/knife/pregame dead air.
+  const firstLiveStart =
+    data.roundClockStarts?.find(([, r]) => r >= 1) ?? data.roundClockStarts?.[0];
+  frameIndex = firstLiveStart
+    ? Math.min(
+        Math.max(lowerBoundBy(data.frames, firstLiveStart[0], (f) => f[0]), 0),
+        data.frames.length - 1,
+      )
+    : 0;
+  scrub.value = String(frameIndex);
   analysisPlayerIdx = -1;
 
   analysis = analyzeDemo(data, bb ?? defaultBBox);
@@ -2571,6 +3098,9 @@ async function applyDemoPayload(
   setMetaLine();
   buildLegend();
   buildAnalysisPanel();
+  renderRoundRail();
+  renderTimelineMarkers();
+  closeLoadModal();
   render();
 
   if (source) {
@@ -2764,4 +3294,111 @@ function setMetaLine(): void {
   metaEl.textContent = `${data.mapName} · ${data.demoPath} · tick sample ${data.tickStep} · ${shotN} gunshots · ${utilN} utility throws${layoutHint}${exportHint}`;
 }
 
+// ---------------------------------------------------------------------------
+// Round rail, timeline markers, load modal, layers panel
+// ---------------------------------------------------------------------------
+
+let railActiveRound = -1;
+
+function updateRoundRailActive(round: number): void {
+  if (round === railActiveRound) return;
+  railActiveRound = round;
+  roundRailEl.querySelectorAll<HTMLButtonElement>(".rnd").forEach((b) => {
+    const on = Number(b.dataset.round) === round;
+    b.classList.toggle("on", on);
+    if (on) b.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function renderRoundRail(): void {
+  railActiveRound = -1;
+  if (!data?.frames.length) {
+    roundRailEl.innerHTML = "";
+    return;
+  }
+  const rounds = [...new Set((data.roundClockStarts ?? []).map(([, r]) => r))].sort((a, b) => a - b);
+  if (!rounds.length) {
+    for (const f of data.frames) if (!rounds.includes(f[1])) rounds.push(f[1]);
+  }
+  const winner = new Map<number, number>();
+  for (const [, r, w] of data.roundResults ?? []) winner.set(r, w);
+  const half = rounds.length > 12 ? 12 : -1;
+  const parts: string[] = ["<h6>ROUNDS</h6>"];
+  rounds.forEach((r, i) => {
+    if (i === half) parts.push('<div class="half"></div>');
+    const w = winner.get(r);
+    const cls = w === 3 ? " w-ct" : w === 2 ? " w-t" : "";
+    parts.push(
+      `<button type="button" class="rnd${cls}" data-round="${r}" title="Round ${r + 1}"><b>${r + 1}</b><span class="bar"></span></button>`,
+    );
+  });
+  roundRailEl.innerHTML = parts.join("");
+  roundRailEl.querySelectorAll<HTMLButtonElement>(".rnd").forEach((b) => {
+    b.addEventListener("click", () => {
+      jumpToRound(Number(b.dataset.round), { afterFreeze: skipFreezeOnRoundNav });
+    });
+  });
+}
+
+/** Whole-demo markers over the scrubber: kills (by attacker side), bomb plants, round starts. */
+function renderTimelineMarkers(): void {
+  if (!data?.frames.length) {
+    timelineMarkersEl.innerHTML = "";
+    return;
+  }
+  const frames = data.frames;
+  const last = Math.max(1, frames.length - 1);
+  const pos = (tick: number): number => {
+    const i = Math.min(Math.max(lowerBoundBy(frames, tick, (f) => f[0]), 0), last);
+    return (i / last) * 100;
+  };
+  const teamAt = (tick: number, idx: number): number => {
+    const i = Math.min(Math.max(lowerBoundBy(frames, tick, (f) => f[0]), 0), last);
+    for (const pl of frames[i][2]) {
+      if (Number(pl[0]) === idx) return Number(pl[4]);
+    }
+    return 0;
+  };
+  const parts: string[] = [];
+  for (const [tick] of data.roundClockStarts ?? []) {
+    parts.push(`<i class="mk rs" style="left:${pos(tick).toFixed(3)}%"></i>`);
+  }
+  for (const k of data.kills ?? []) {
+    const team = k[2] >= 0 ? teamAt(k[0], k[2]) : 0;
+    const cls = team === 3 ? "kct" : team === 2 ? "kt" : "kx";
+    parts.push(`<i class="mk ${cls}" style="left:${pos(k[0]).toFixed(3)}%"></i>`);
+  }
+  for (const bp of data.bombPlants ?? []) {
+    parts.push(`<i class="mk bp" style="left:${pos(bp[0]).toFixed(3)}%"></i>`);
+  }
+  timelineMarkersEl.innerHTML = parts.join("");
+}
+
+function openLoadModal(): void {
+  loadModalEl.hidden = false;
+}
+
+function closeLoadModal(): void {
+  loadModalEl.hidden = true;
+}
+
+openLoadBtn.addEventListener("click", openLoadModal);
+loadCloseBtn.addEventListener("click", closeLoadModal);
+loadModalEl.addEventListener("click", (ev) => {
+  if (ev.target === loadModalEl) closeLoadModal();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !loadModalEl.hidden && data) closeLoadModal();
+});
+demoDemInput.addEventListener("change", () => {
+  demoDemNameEl.textContent = demoDemInput.files?.[0]?.name ?? "No file";
+});
+layersToggleBtn.addEventListener("click", () => {
+  const show = layersPanelEl.hidden;
+  layersPanelEl.hidden = !show;
+  layersToggleBtn.setAttribute("aria-expanded", show ? "true" : "false");
+});
+
+setIconLoadHandler(() => render());
 initDemoPicker();
+openLoadModal();

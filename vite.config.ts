@@ -209,8 +209,75 @@ function demoExportPlugin(): Plugin {
   };
 }
 
+/**
+ * Dev-only `/steam-avatar?steamid=<id64>` proxy: reads the public Steam profile XML, fetches the
+ * full-size avatar and returns the image bytes (browsers can't call steamcommunity.com directly
+ * because of CORS). Results are cached in memory; any failure is a 404 so the viewer falls back
+ * to its coloured dots.
+ */
+function steamAvatarPlugin(): Plugin {
+  const cache = new Map<string, { type: string; body: Buffer } | null>();
+  const timeoutFetch = async (url: string): Promise<Response> => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    try {
+      return await fetch(url, { signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  return {
+    name: "cs2-steam-avatar",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const [pathname, query = ""] = (req.url ?? "").split("?");
+        if (pathname !== "/steam-avatar") {
+          next();
+          return;
+        }
+        const steamid = new URLSearchParams(query).get("steamid") ?? "";
+        if (!/^\d{17}$/.test(steamid)) {
+          res.statusCode = 400;
+          res.end("bad steamid");
+          return;
+        }
+        void (async () => {
+          try {
+            let hit = cache.get(steamid);
+            if (hit === undefined) {
+              hit = null;
+              const xml = await (await timeoutFetch(`https://steamcommunity.com/profiles/${steamid}?xml=1`)).text();
+              const m = /<avatarFull><!\[CDATA\[(https:\/\/[^\]]+)\]\]><\/avatarFull>/.exec(xml);
+              if (m) {
+                const img = await timeoutFetch(m[1]);
+                const type = img.headers.get("content-type") ?? "";
+                if (img.ok && type.startsWith("image/")) {
+                  hit = { type, body: Buffer.from(await img.arrayBuffer()) };
+                }
+              }
+              cache.set(steamid, hit);
+            }
+            if (!hit) {
+              res.statusCode = 404;
+              res.end("no avatar");
+              return;
+            }
+            res.statusCode = 200;
+            res.setHeader("Content-Type", hit.type);
+            res.setHeader("Cache-Control", "public, max-age=86400");
+            res.end(hit.body);
+          } catch {
+            res.statusCode = 404;
+            res.end("avatar fetch failed");
+          }
+        })();
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [demoExportPlugin()],
+  plugins: [demoExportPlugin(), steamAvatarPlugin()],
   root: ".",
   publicDir: "public",
   build: {

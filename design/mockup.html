@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="cs2.png"><title>CS2 Demo Viewer — Mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --surface: #12151a;
+  --surface-2: #181c22;
+  --surface-3: #20252d;
+  --line: #262b33;
+  --line-2: #323943;
+  --text: #e9ecf0;
+  --muted: #8b939e;
+  --faint: #5d6570;
+  --accent: #3ddc97;
+  --accent-dim: rgba(61,220,151,.14);
+  --t: #e4a019;
+  --ct: #5b8fd8;
+  --bad: #e05555;
+  --warn: #f5a623;
+  --good: #6ee8a2;
+  --r: 10px;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  --display: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; overflow: hidden; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.num { font-variant-numeric: tabular-nums; }
+.score, .clock, .eco b, .stat b, .team-h, .layers-head span, .card h4, .rnd b, .drop h2, .brand, .tab, .pl .nm, .hud-top .team { font-family: var(--display); }
+.score, .clock, .eco b, .stat b, .drop h2 { letter-spacing: .01em !important; }
+.score { font-size: 17px !important; font-weight: 700; } .clock { font-size: 22px !important; font-weight: 700; } .eco b { font-size: 18px !important; } .stat b { font-size: 22px !important; }
+.brand { font-size: 15px; } .tab { font-size: 13px; } .pl .nm { font-size: 14px; }
+.ico { width: 15px; height: 15px; fill: currentColor; vertical-align: -2px; flex-shrink: 0; }
+.pl .ic { display: inline-flex; gap: 4px; color: var(--muted); } .pl .ic .ico { width: 14px; height: 14px; }
+.ico.smoke { color: #b9c2cf; } .ico.molo { color: #ff7a3a; } .ico.flash { color: #f4f1c0; } .ico.he { color: #9ccf7a; }
+.legend-bar .ico { width: 14px; height: 14px; }
+.tool .ico { width: 18px; height: 18px; } .play .ico { width: 16px; height: 16px; margin-left: 2px; } .step .ico { width: 15px; height: 15px; }
+
+.shell {
+  display: grid;
+  grid-template-columns: 64px 1fr 340px;
+  grid-template-rows: 52px 1fr 92px;
+  grid-template-areas: "top top top" "rail stage side" "rail dock side";
+  height: 100vh;
+}
+
+/* ---------- top bar ---------- */
+.top {
+  grid-area: top; display: flex; align-items: center; gap: 16px;
+  padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; }
+.brand img { width: 28px; height: 28px; border-radius: 6px; display: block; }
+.brand small { color: var(--faint); font-weight: 500; }
+.demo-pill {
+  display: flex; align-items: center; gap: 10px; padding: 5px 6px 5px 12px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; min-width: 0;
+}
+.demo-pill .map { font-weight: 600; }
+.demo-pill .sub { color: var(--muted); }
+.score { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+.score .ct { color: var(--ct); } .score .t { color: var(--t); } .score .sep { color: var(--faint); font-weight: 500; }
+.top .grow { flex: 1; }
+.btn {
+  background: var(--surface-3); border: 1px solid var(--line-2); border-radius: 8px;
+  padding: 6px 12px; transition: background .12s;
+}
+.btn:hover { background: #29303a; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #05150d; font-weight: 650; }
+.btn.primary:hover { background: #55e8a8; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { color: var(--text); background: var(--surface-3); }
+.btn.sm { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
+
+/* ---------- round rail ---------- */
+.rail {
+  grid-area: rail; border-right: 1px solid var(--line); background: var(--surface);
+  overflow-y: auto; padding: 10px 0; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  scrollbar-width: none;
+}
+.rail h6 { margin: 4px 0 6px; font-size: 9px; letter-spacing: .12em; color: var(--faint); font-weight: 600; }
+.rnd {
+  width: 44px; height: 38px; border-radius: 8px; border: 1px solid transparent; background: transparent;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  position: relative;
+}
+.rnd b { font-size: 12px; font-weight: 600; color: var(--muted); }
+.rnd .bar { width: 22px; height: 3px; border-radius: 2px; }
+.rnd.w-ct .bar { background: var(--ct); } .rnd.w-t .bar { background: var(--t); }
+.rnd:hover { background: var(--surface-3); }
+.rnd.on { background: var(--accent-dim); border-color: rgba(61,220,151,.45); }
+.rnd.on b { color: var(--accent); }
+.half { width: 28px; height: 1px; background: var(--line-2); margin: 6px 0; }
+
+/* ---------- stage ---------- */
+.stage { grid-area: stage; position: relative; overflow: hidden; background: radial-gradient(ellipse at 50% 40%, #151b23 0%, #0b0d10 75%); display: grid; place-items: center; }
+.map-wrap { position: relative; height: min(100%, calc(100vw - 420px)); aspect-ratio: 1; max-height: 100%; }
+.map-wrap img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .92; filter: saturate(.85) contrast(1.02); }
+.map-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.float { position: absolute; background: rgba(18,21,26,.82); backdrop-filter: blur(10px); border: 1px solid var(--line); border-radius: var(--r); }
+.hud-top { top: 14px; left: 14px; display: grid; gap: 8px; padding: 10px; width: 168px; }
+.hud-main { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.hud-top .clock { font-size: 26px !important; font-weight: 700; letter-spacing: -.03em; line-height: 1; min-width: 0; text-align: left; }
+.hud-round { font-size: 9px; font-weight: 600; color: var(--muted); letter-spacing: .08em; text-align: right; }
+.hud-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.hud-team { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 5px 8px; border-radius: 7px; background: var(--surface-2); border-left: 3px solid currentColor; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.hud-team b { font-size: 16px; color: var(--text); line-height: 1; }
+.hud-ct { color: var(--ct); } .hud-t { color: var(--t); }
+.bomb { display: flex; align-items: center; gap: 6px; color: #f0c987; font-size: 12px; font-weight: 600; padding: 6px 8px 0; border-top: 1px solid var(--line); }
+.bomb img { width: 16px; height: 16px; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 7px rgba(224,85,85,0); } }
+
+.tools-v { top: 150px; left: 14px; display: flex; flex-direction: column; padding: 5px; gap: 2px; }
+.tool { width: 36px; height: 36px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; font-size: 15px; position: relative; }
+.tool:hover { background: var(--surface-3); color: var(--text); }
+.tool.on { background: var(--accent-dim); color: var(--accent); }
+.tool .tip { position: absolute; left: 44px; background: #000; padding: 3px 8px; border-radius: 6px; font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s; z-index: 5; color: var(--text); }
+.tool:hover .tip { opacity: 1; }
+.tools-v hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; width: calc(100% - 12px); }
+
+.layers { top: 14px; right: 14px; width: 232px; padding: 10px; }
+.layers-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.layers-head span { font-size: 10px; letter-spacing: .1em; color: var(--faint); font-weight: 600; text-transform: uppercase; }
+.sw { display: flex; align-items: center; justify-content: space-between; padding: 6px 4px; border-radius: 6px; color: var(--muted); cursor: pointer; user-select: none; }
+.sw:hover { color: var(--text); background: rgba(255,255,255,.03); }
+.sw .k { width: 28px; height: 16px; border-radius: 99px; background: var(--surface-3); position: relative; transition: background .15s; flex-shrink: 0; }
+.sw .k::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--faint); transition: all .15s; }
+.sw.on { color: var(--text); } .sw.on .k { background: var(--accent); } .sw.on .k::after { left: 14px; background: #05150d; }
+.sub-opt { margin: 2px 0 6px 4px; padding-left: 10px; border-left: 2px solid var(--line-2); display: grid; gap: 6px; }
+select.sel { width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--line-2); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px; }
+.seg { display: flex; background: var(--surface-2); border-radius: 6px; padding: 2px; border: 1px solid var(--line); }
+.seg button { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 3px 0; border-radius: 4px; font-size: 11px; }
+.seg button.on { background: var(--surface-3); color: var(--text); }
+
+.legend-bar { left: 14px; bottom: 14px; display: flex; gap: 14px; padding: 7px 12px; font-size: 11px; color: var(--muted); }
+.legend-bar span { display: flex; align-items: center; gap: 6px; }
+.legend-bar i { width: 9px; height: 9px; border-radius: 50%; display: block; }
+
+/* ---------- dock ---------- */
+.dock { grid-area: dock; border-top: 1px solid var(--line); background: var(--surface); padding: 10px 18px 12px; display: grid; grid-template-rows: auto 1fr; gap: 8px; }
+.timeline { position: relative; height: 28px; }
+.tl-track { position: absolute; top: 11px; left: 0; right: 0; height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.tl-freeze { position: absolute; left: 0; width: 9%; height: 100%; background: repeating-linear-gradient(45deg, #2b3139, #2b3139 3px, #232830 3px, #232830 6px); }
+.tl-fill { position: absolute; left: 0; width: 46%; height: 100%; background: linear-gradient(90deg, #2a9d6c, var(--accent)); }
+.tl-bomb { position: absolute; left: 61%; right: 0; height: 100%; background: rgba(224,85,85,.35); }
+.mk { position: absolute; top: 3px; width: 2px; height: 22px; border-radius: 2px; transform: translateX(-1px); }
+.mk::after { content: ""; position: absolute; top: -4px; left: -3px; width: 8px; height: 8px; border-radius: 50%; background: inherit; }
+.mk.kct { background: var(--ct); } .mk.kt { background: var(--t); } .mk.bp { background: var(--bad); } .mk.ut { background: #9aa7b8; opacity: .6; width: 1px; }
+.mk.ut::after { display: none; }
+.tl-thumb { position: absolute; left: 46%; top: 4px; width: 14px; height: 20px; border-radius: 4px; background: #fff; transform: translateX(-7px); box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+.tl-time { position: absolute; left: 46%; top: -18px; transform: translateX(-50%); font-size: 10px; background: #000; padding: 1px 6px; border-radius: 4px; }
+.controls { display: flex; align-items: center; gap: 14px; }
+.play { width: 38px; height: 38px; border-radius: 50%; background: var(--accent); color: #05150d; border: 0; font-size: 15px; display: grid; place-items: center; }
+.play:hover { background: #55e8a8; }
+.step { width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); }
+.step:hover { background: var(--surface-3); color: var(--text); }
+.speed { display: flex; background: var(--surface-2); border: 1px solid var(--line); padding: 2px; border-radius: 8px; }
+.speed button { border: 0; background: transparent; color: var(--muted); padding: 4px 9px; border-radius: 6px; font-size: 12px; }
+.speed button.on { background: var(--surface-3); color: var(--text); }
+.readout { font-size: 12px; color: var(--muted); }
+.readout b { color: var(--text); font-weight: 600; }
+.chips { display: flex; gap: 6px; margin-left: auto; }
+.chip { border: 1px solid var(--line-2); background: transparent; color: var(--muted); border-radius: 99px; padding: 4px 11px; font-size: 12px; }
+.chip.on { border-color: rgba(61,220,151,.5); color: var(--accent); background: var(--accent-dim); }
+.kbd { font-size: 10px; color: var(--faint); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+
+/* ---------- side panel ---------- */
+.side { grid-area: side; border-left: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+.tabs { display: flex; padding: 0 10px; border-bottom: 1px solid var(--line); gap: 2px; }
+.tab { background: none; border: 0; padding: 14px 10px 12px; color: var(--muted); border-bottom: 2px solid transparent; font-weight: 500; }
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); }
+.tab .ct { margin-left: 4px; font-size: 10px; background: var(--surface-3); border-radius: 99px; padding: 1px 6px; color: var(--muted); }
+.panel { flex: 1; overflow-y: auto; padding: 14px; display: none; flex-direction: column; gap: 14px; }
+.panel.on { display: flex; }
+.panel::-webkit-scrollbar { width: 8px; } .panel::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
+
+.eco { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.eco div { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 8px 10px; }
+.eco small { display: block; color: var(--faint); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 2px; }
+.eco b { font-size: 17px; letter-spacing: -.02em; }
+.eco .ct b { color: var(--ct); } .eco .t b { color: var(--t); }
+.eco em { font-style: normal; color: var(--muted); font-size: 11px; margin-left: 5px; }
+
+.team-h { display: flex; align-items: center; justify-content: space-between; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 6px; }
+.team-h .tag { display: flex; align-items: center; gap: 6px; }
+.team-h .tag i { width: 8px; height: 8px; border-radius: 50%; display: block; }
+.pl { display: grid; grid-template-columns: 10px 1fr auto; gap: 2px 10px; align-items: center; padding: 8px 10px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; }
+.pl:hover { background: var(--surface-2); }
+.pl.sel { background: var(--surface-2); border-color: var(--line-2); }
+.pl.dead { opacity: .45; }
+.pl .dot { width: 10px; height: 10px; border-radius: 50%; grid-row: span 2; }
+.pl .nm { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.pl .nm .ic { font-size: 10px; color: var(--faint); font-weight: 500; }
+.pl .cash { color: var(--good); font-size: 12px; text-align: right; }
+.pl .hp { grid-column: 2; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.pl .hpbar { flex: 0 0 56px; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; }
+.pl .hpbar i { display: block; height: 100%; background: var(--good); }
+.pl .kda { grid-column: 3; color: var(--muted); font-size: 11px; text-align: right; }
+.pl.hurt .hpbar i { background: var(--warn); }
+.pl.low .hpbar i { background: var(--bad); }
+
+.card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; }
+.card h4 { margin: 0 0 10px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat small { color: var(--muted); font-size: 11px; display: block; }
+.stat b { font-size: 20px; letter-spacing: -.02em; }
+.good { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+.tbar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; gap: 2px; margin: 6px 0; }
+.tbar i { display: block; }
+.insight { display: flex; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); color: var(--muted); line-height: 1.45; }
+.insight:first-of-type { border-top: 0; padding-top: 0; }
+.insight .tagi { flex: 0 0 auto; width: 6px; border-radius: 3px; }
+.insight b { color: var(--text); font-weight: 600; }
+.insight .go { margin-left: auto; align-self: center; }
+.player-sel { display: flex; align-items: center; gap: 10px; }
+.player-sel select { flex: 1; }
+
+/* ---------- command palette-ish load modal hint ---------- */
+.empty { position: absolute; inset: 0; display: none; place-items: center; background: rgba(11,13,16,.8); backdrop-filter: blur(6px); z-index: 20; }
+.empty.on { display: grid; }
+.drop { width: 520px; border: 1.5px dashed var(--line-2); border-radius: 18px; padding: 36px; background: var(--surface); text-align: center; }
+.drop h2 { margin: 0 0 6px; font-size: 20px; letter-spacing: -.02em; }
+.drop p { color: var(--muted); margin: 0 0 20px; }
+.drop .row { display: flex; gap: 8px; justify-content: center; margin-bottom: 18px; }
+.recent { text-align: left; border-top: 1px solid var(--line); padding-top: 14px; }
+.recent h5 { margin: 0 0 8px; font-size: 10px; letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+.recent-item { display: flex; justify-content: space-between; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.recent-item:hover { background: var(--surface-2); }
+.recent-item span { color: var(--muted); }
+
+.note { position: fixed; bottom: 8px; right: 360px; font-size: 11px; color: var(--faint); z-index: 30; background: rgba(0,0,0,.5); padding: 3px 8px; border-radius: 6px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-smoke" viewBox="0 0 24 24"><path d="M9 3h6v2h-1v2.2c3 .8 5 3.6 5 6.8v6a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6c0-3.2 2-6 5-6.8V5H9z"/><rect x="8" y="12" width="8" height="2" rx="1" fill="#0b0d10" opacity=".45"/></symbol>
+  <symbol id="i-flash" viewBox="0 0 24 24"><path d="M9 2h6v3h-1v2c3 .8 5 3.5 5 6.7V20a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-6.3C5 10.5 7 7.8 10 7V5H9z"/><path d="M12 11l1 2.6 2.6.4-2 1.8.6 2.6L12 17l-2.2 1.4.6-2.6-2-1.8 2.6-.4z" fill="#0b0d10" opacity=".5"/></symbol>
+  <symbol id="i-molo" viewBox="0 0 24 24"><path d="M10 2h4v4h-1v2.6c2.6 1 4 3.2 4 6V20a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-5.4c0-2.8 1.4-5 4-6V6h-1z"/><path d="M12 11c1.8 1.6 2.6 3 2.6 4.4a2.6 2.6 0 0 1-5.2 0c0-.9.4-1.700 1.100-2.500.1.800.5 1.200 1 1.200-.3-1.300-.1-2.300.5-3.100z" fill="#0b0d10" opacity=".55"/></symbol>
+  <symbol id="i-he" viewBox="0 0 24 24"><path d="M14 2h3v2h-2l-.6 1.800A6.500 6.500 0 0 1 12 22a6.500 6.500 0 0 1-2.400-12.500L10.500 7H9V5h3.700z"/></symbol>
+  <symbol id="i-kevlar" viewBox="0 0 24 24"><path d="M4 4c3 1.2 5.500 1.800 8 1.800S17 5.200 20 4v8c0 4.500-3.500 7.800-8 9.500C7.500 19.800 4 16.500 4 12z"/></symbol>
+  <symbol id="i-skull" viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 2.600 1.200 4.300 3 5.400V19h2.500v-2h1v2h3v-2h1v2H17v-3.600c1.800-1.100 3-2.800 3-5.400a8 8 0 0 0-8-8zm-3.200 9.500a1.800 1.800 0 1 1 0-3.600 1.800 1.800 0 0 1 0 3.600zm6.400 0a1.800 1.800 0 1 1 0-3.600 1.800 1.800 0 0 1 0 3.600z"/></symbol>
+  <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-2 6z"/></symbol>
+  <symbol id="i-rect" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 19L18 6M10 6h8v8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-path" viewBox="0 0 24 24"><path d="M3 18c4 0 3-12 8-12s3 12 10 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M4 4h16v13h-9l-5 4v-4H4z"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 7H4v5M4.5 12A8 8 0 1 1 7 17.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 24 24"><path d="M5 4h2.500v16H5zM20 4v16L9 12z"/></symbol>
+  <symbol id="i-next" viewBox="0 0 24 24"><path d="M16.500 4H19v16h-2.500zM4 4l11 8L4 20z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M11 5L3 12l8 7zM21 5l-8 7 8 7z"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 24 24"><path d="M13 5l8 7-8 7zM3 5l8 7-8 7z"/></symbol>
+</svg>
+<div class="shell">
+
+  <!-- TOP BAR -->
+  <header class="top">
+    <div class="brand"><img src="cs2.png" alt="CS2"> CS2 Viewer <small>2D</small></div>
+    <div class="demo-pill">
+      <span class="map">de_mirage</span>
+      <span class="sub">·</span>
+      <span class="sub">match_2026-10-12.dem</span>
+      <button class="btn ghost sm" id="openLoad">Change ▾</button>
+    </div>
+    <div class="grow"></div>
+    <button class="btn sm">Export session</button>
+    <button class="btn sm">Import session</button>
+    <button class="btn primary sm" id="openLoad2">＋ Load demo</button>
+  </header>
+
+  <!-- ROUND RAIL -->
+  <nav class="rail" aria-label="Rounds">
+    <h6>ROUNDS</h6>
+    <button class="rnd w-ct"><b>1</b><span class="bar"></span></button>
+    <button class="rnd w-t"><b>2</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>3</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>4</b><span class="bar"></span></button>
+    <button class="rnd w-t"><b>5</b><span class="bar"></span></button>
+    <button class="rnd w-t"><b>6</b><span class="bar"></span></button>
+    <button class="rnd w-ct on"><b>7</b><span class="bar"></span></button>
+    <button class="rnd w-t"><b>8</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>9</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>10</b><span class="bar"></span></button>
+    <button class="rnd w-t"><b>11</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>12</b><span class="bar"></span></button>
+    <div class="half"></div>
+    <button class="rnd w-t"><b>13</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>14</b><span class="bar"></span></button>
+    <button class="rnd w-ct"><b>15</b><span class="bar"></span></button>
+  </nav>
+
+  <!-- STAGE -->
+  <main class="stage">
+    <div class="map-wrap">
+      <canvas id="fx"></canvas>
+      <img src="../public/maps/de_mirage_radar.png" alt="" />
+      <svg viewBox="0 0 1000 1000" aria-hidden="true">
+        <defs>
+          <radialGradient id="flash"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+          <radialGradient id="smoke"><stop offset="0" stop-color="#b9c2cf" stop-opacity=".65"/><stop offset="1" stop-color="#b9c2cf" stop-opacity=".1"/></radialGradient>
+          <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#c8d0dc"/></marker>
+        </defs>
+        <!-- smoke trajectory (replaces white beam from todo) -->
+        <path d="M 345 640 Q 420 470 505 418" fill="none" stroke="#c8d0dc" stroke-opacity=".6" stroke-width="2" stroke-dasharray="3 6" marker-end="url(#ah)"/>
+        
+        
+        <!-- sight lines -->
+        <path d="M 562 505 L 470 560" stroke="#e4a019" stroke-opacity=".7" stroke-width="2"/>
+        <!-- kill -->
+        <g transform="translate(470 560)"><circle r="17" fill="#e05555" stroke="#1a0808" stroke-width="2"/><use href="#i-skull" x="-11" y="-11" width="22" height="22" fill="#fff"/></g>
+        <!-- bomb -->
+        <g transform="translate(700 470)"><image href="../public/bomb_c4.svg" x="-16" y="-16" width="32" height="32"/><circle r="30" fill="none" stroke="#e05555" stroke-opacity=".5" stroke-dasharray="4 4"/></g>
+        <!-- players CT -->
+        <g font-size="15" font-weight="600" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif">
+          <g transform="translate(330 650)"><path d="M0 0 L26 -10 L26 10z" fill="#5b8fd8" opacity=".25"/><circle r="11" fill="#5b8fd8" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">Nova</text></g>
+          <g transform="translate(405 590)"><circle r="11" fill="#5b8fd8" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">kiwi</text></g>
+          <g transform="translate(300 420)"><circle r="11" fill="#5b8fd8" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">Rex</text></g>
+          <g transform="translate(560 330)"><circle r="11" fill="#5b8fd8" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">sh0t</text></g>
+          <!-- players T -->
+          <g transform="translate(562 505)"><circle r="11" fill="#e4a019" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">Kurō</text></g>
+          <g transform="translate(640 600)"><circle r="11" fill="#e4a019" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">mnt</text></g>
+          <g transform="translate(700 520)"><circle r="11" fill="#e4a019" stroke="#fff" stroke-width="2"/><text y="-20" fill="#e9ecf0">Jax</text></g>
+        </g>
+      </svg>
+    </div>
+
+    <!-- floating HUD -->
+    <div class="float hud-top">
+      <div class="hud-main"><div class="clock num">0:47</div><div class="hud-round">ROUND 7</div></div>
+      <div class="hud-sides">
+        <div class="hud-team hud-ct"><span>CT</span><b class="num">4</b></div>
+        <div class="hud-team hud-t"><span>T</span><b class="num">3</b></div>
+      </div>
+      <div class="bomb"><img src="../public/bomb_c4.svg" alt="bomb"> <span>Planted B · 0:28</span></div>
+    </div>
+
+    <!-- tool rail -->
+    <div class="float tools-v">
+      <button class="tool on"><svg class="ico "><use href="#i-cursor"/></svg><span class="tip">Select (V)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-rect"/></svg><span class="tip">Rectangle (R)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-circle"/></svg><span class="tip">Circle (C)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-arrow"/></svg><span class="tip">Arrow (A)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-path"/></svg><span class="tip">Path (P)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-molo"/></svg><span class="tip">Grenade lineup (G)</span></button>
+      <hr/>
+      <button class="tool"><svg class="ico "><use href="#i-note"/></svg><span class="tip">Comment (M)</span></button>
+      <button class="tool"><svg class="ico "><use href="#i-undo"/></svg><span class="tip">Undo</span></button>
+    </div>
+
+    <!-- layers -->
+    <div class="float layers">
+      <div class="layers-head"><span>Layers</span><button class="btn ghost sm">Reset</button></div>
+      <div class="sw on"><span>Gunshots</span><i class="k"></i></div>
+      <div class="sw on"><span>Utilities</span><i class="k"></i></div>
+      <div class="sw on"><span>Effects</span><i class="k"></i></div>
+      <div class="sw on"><span>Area names</span><i class="k"></i></div>
+      <div class="sw on" id="heatSw"><span>Heatmap</span><i class="k"></i></div>
+      <div class="sub-opt" id="heatOpts">
+        <select class="sel"><option>All players</option><option>Kurō</option></select>
+        <div class="seg"><button class="on">Dwell</button><button>Coverage</button></div>
+        <div class="seg"><button class="on">Both</button><button>Upper</button><button>Lower</button></div>
+      </div>
+      <div class="sw"><span>Follow player</span><i class="k"></i></div>
+      <div class="sw"><span>Auto-zoom</span><i class="k"></i></div>
+      <div class="sw"><span>Performance mode</span><i class="k"></i></div>
+    </div>
+
+    <div class="float legend-bar">
+      <span><i style="background:var(--ct)"></i>CT</span>
+      <span><i style="background:var(--t)"></i>T</span>
+      <span><svg class="ico smoke"><use href="#i-smoke"/></svg>Smoke</span>
+      <span><svg class="ico molo"><use href="#i-molo"/></svg>Molotov</span>
+      <span><svg class="ico flash"><use href="#i-flash"/></svg>Flash</span>
+      <span><img src="../public/bomb_c4.svg" alt="bomb" style="width:14px;height:14px;vertical-align:-3px">Bomb</span>
+    </div>
+  </main>
+
+  <!-- PLAYBACK DOCK -->
+  <section class="dock">
+    <div class="timeline">
+      <div class="tl-time num">0:47</div>
+      <div class="tl-track"><div class="tl-freeze"></div><div class="tl-fill"></div><div class="tl-bomb"></div></div>
+      <i class="mk ut" style="left:12%"></i><i class="mk ut" style="left:18%"></i><i class="mk ut" style="left:26%"></i>
+      <i class="mk kct" style="left:32%"></i><i class="mk kt" style="left:37%"></i><i class="mk kt" style="left:41%"></i>
+      <i class="mk kct" style="left:52%"></i><i class="mk bp" style="left:61%"></i><i class="mk kt" style="left:74%"></i><i class="mk kct" style="left:83%"></i>
+      <div class="tl-thumb"></div>
+    </div>
+    <div class="controls">
+      <button class="step" title="Previous round"><svg class="ico "><use href="#i-prev"/></svg></button>
+      <button class="step" title="Back 5s"><svg class="ico "><use href="#i-back"/></svg><span class="kbd">←</span></button>
+      <button class="play" title="Play / pause (Space)"><svg class="ico "><use href="#i-play"/></svg></button>
+      <button class="step" title="Forward 5s"><svg class="ico "><use href="#i-fwd"/></svg><span class="kbd">→</span></button>
+      <button class="step" title="Next round"><svg class="ico "><use href="#i-next"/></svg></button>
+      <div class="speed"><button>0.5×</button><button class="on">1×</button><button>2×</button><button>4×</button></div>
+      <div class="readout num">Round <b>7</b> / 24 · tick <b>41 280</b> · <b>0:47</b> / 1:55</div>
+      <div class="chips">
+        <button class="chip on">Skip freeze</button>
+        <button class="chip">Auto-advance</button>
+        <button class="chip">Coach mode</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- SIDE PANEL -->
+  <aside class="side">
+    <div class="tabs" role="tablist">
+      <button class="tab on" data-tab="live">Live</button>
+      <button class="tab" data-tab="analysis">Analysis</button>
+      <button class="tab" data-tab="duels">Duels</button>
+      <button class="tab" data-tab="economy">Economy</button>
+      <button class="tab" data-tab="utility">Util</button>
+      <button class="tab" data-tab="comments">Notes<span class="ct">3</span></button>
+    </div>
+
+    <!-- LIVE -->
+    <div class="panel on" id="p-live">
+      <div class="eco">
+        <div class="ct"><small>CT bank</small><b class="num">$18 400</b><em>full buy</em></div>
+        <div class="t"><small>T bank</small><b class="num">$11 250</b><em>force</em></div>
+      </div>
+      <section>
+        <div class="team-h"><span class="tag"><i style="background:var(--ct)"></i>Counter-Terrorists</span><span>4 alive</span></div>
+        <div class="pl sel"><span class="dot" style="background:var(--ct)"></span><span class="nm">Nova <span class="ic"><svg class="ico "><use href="#i-kevlar"/></svg><svg class="ico molo"><use href="#i-molo"/></svg><svg class="ico smoke"><use href="#i-smoke"/></svg></span></span><span class="cash num">$2 900</span><span class="hp"><span class="hpbar"><i style="width:100%"></i></span>100 · M4A1-S</span><span class="kda num">12 / 5 / 3</span></div>
+        <div class="pl hurt"><span class="dot" style="background:var(--ct)"></span><span class="nm">kiwi <span class="ic"><svg class="ico flash"><use href="#i-flash"/></svg><svg class="ico smoke"><use href="#i-smoke"/></svg></span></span><span class="cash num">$4 100</span><span class="hp"><span class="hpbar"><i style="width:54%"></i></span>54 · AWP</span><span class="kda num">8 / 7 / 1</span></div>
+        <div class="pl"><span class="dot" style="background:var(--ct)"></span><span class="nm">Rex</span><span class="cash num">$3 400</span><span class="hp"><span class="hpbar"><i style="width:100%"></i></span>100 · Famas</span><span class="kda num">10 / 6 / 4</span></div>
+        <div class="pl low"><span class="dot" style="background:var(--ct)"></span><span class="nm">sh0t</span><span class="cash num">$3 300</span><span class="hp"><span class="hpbar"><i style="width:12%"></i></span>12 · USP</span><span class="kda num">5 / 9 / 2</span></div>
+        <div class="pl dead"><span class="dot" style="background:var(--ct)"></span><span class="nm">dae</span><span class="cash num">$0</span><span class="hp">Dead · 0:19</span><span class="kda num">7 / 8 / 0</span></div>
+      </section>
+      <section>
+        <div class="team-h"><span class="tag"><i style="background:var(--t)"></i>Terrorists</span><span>3 alive</span></div>
+        <div class="pl"><span class="dot" style="background:var(--t)"></span><span class="nm">Kurō <span class="ic"><img src="../public/bomb_c4.svg" alt="bomb" style="width:15px;height:15px;vertical-align:-3px"></span></span><span class="cash num">$1 800</span><span class="hp"><span class="hpbar"><i style="width:80%"></i></span>80 · AK-47</span><span class="kda num">14 / 4 / 2</span></div>
+        <div class="pl"><span class="dot" style="background:var(--t)"></span><span class="nm">mnt</span><span class="cash num">$2 500</span><span class="hp"><span class="hpbar"><i style="width:100%"></i></span>100 · Galil</span><span class="kda num">9 / 8 / 3</span></div>
+        <div class="pl"><span class="dot" style="background:var(--t)"></span><span class="nm">Jax</span><span class="cash num">$2 000</span><span class="hp"><span class="hpbar"><i style="width:100%"></i></span>100 · AK-47</span><span class="kda num">6 / 10 / 1</span></div>
+      </section>
+    </div>
+
+    <!-- ANALYSIS -->
+    <div class="panel" id="p-analysis">
+      <div class="player-sel"><select class="sel"><option>Team: Terrorists</option><option>Kurō</option></select><button class="btn sm">Compare</button></div>
+      <div class="card">
+        <h4>Overview</h4>
+        <div class="stat-grid">
+          <div class="stat"><small>Rating</small><b class="good num">1.24</b></div>
+          <div class="stat"><small>ADR</small><b class="num">86</b></div>
+          <div class="stat"><small>HS %</small><b class="warn num">38</b></div>
+          <div class="stat"><small>Opening W</small><b class="num">62%</b></div>
+          <div class="stat"><small>Trade rate</small><b class="bad num">31%</b></div>
+          <div class="stat"><small>Survival</small><b class="num">47%</b></div>
+        </div>
+      </div>
+      <div class="card">
+        <h4>Contact timing</h4>
+        <div class="tbar"><i style="flex:22;background:var(--bad)"></i><i style="flex:51;background:var(--warn)"></i><i style="flex:27;background:var(--ct)"></i></div>
+        <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:11px"><span>Early 22%</span><span>Mid 51%</span><span>Late 27%</span></div>
+      </div>
+      <div class="card">
+        <h4>Insights</h4>
+        <div class="insight"><span class="tagi" style="background:var(--bad)"></span><div><b>Weak A-ramp trades.</b> 4 of 6 deaths there went untraded.</div><button class="btn sm go">Jump</button></div>
+        <div class="insight"><span class="tagi" style="background:var(--warn)"></span><div><b>Late rotates.</b> Median rotate begins 9s after first contact.</div><button class="btn sm go">Jump</button></div>
+        <div class="insight"><span class="tagi" style="background:var(--good)"></span><div><b>Strong mid control.</b> 71% opening duel win rate in Top Mid.</div><button class="btn sm go">Jump</button></div>
+      </div>
+    </div>
+
+    <!-- DUELS -->
+    <div class="panel" id="p-duels">
+      <div class="seg"><button class="on">Matrix</button><button>Opening</button><button>Trades</button></div>
+      <div class="card"><h4>Head to head</h4><p style="color:var(--muted);margin:0">Colour-scaled matrix replaces plain table: green = favourable, red = losing.</p></div>
+    </div>
+    <div class="panel" id="p-economy"><div class="card"><h4>Economy</h4><p style="color:var(--muted);margin:0">Round-by-round bank sparkline per team with buy-type chips.</p></div></div>
+    <div class="panel" id="p-utility"><div class="card"><h4>Utility</h4><p style="color:var(--muted);margin:0">Damage, flash assists, smoke lineups per player.</p></div></div>
+    <div class="panel" id="p-comments"><div class="card"><h4>Notes</h4><p style="color:var(--muted);margin:0">Pinned comments with jump-to-tick, kind badges.</p></div></div>
+  </aside>
+
+  <!-- LOAD / EMPTY STATE -->
+  <div class="empty" id="load">
+    <div class="drop">
+      <h2>Load a demo</h2>
+      <p>Drop a <code>.dem</code> file anywhere, or pick a source.</p>
+      <div class="row">
+        <button class="btn primary">Choose .dem</button>
+        <button class="btn">Bundled demo ▾</button>
+        <button class="btn">JSON export</button>
+      </div>
+      <div class="recent">
+        <h5>Recent</h5>
+        <div class="recent-item"><div>de_mirage · match_2026-10-12.dem</div><span>9–6 · today</span></div>
+        <div class="recent-item"><div>de_inferno · scrim_a.dem</div><span>13–11 · 3d</span></div>
+        <div class="recent-item"><div>de_ancient · scrim_b.dem</div><span>7–13 · 5d</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="note">Mockup only · click “Load demo” for empty state · toggles &amp; tabs are live</div>
+
+<script>
+document.querySelectorAll('.sw').forEach(s => s.addEventListener('click', () => {
+  s.classList.toggle('on');
+  if (s.id === 'heatSw') document.getElementById('heatOpts').style.display = s.classList.contains('on') ? '' : 'none';
+}));
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
+  document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + t.dataset.tab));
+}));
+document.querySelectorAll('.seg').forEach(g => g.addEventListener('click', e => {
+  if (e.target.tagName !== 'BUTTON') return;
+  g.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === e.target));
+}));
+document.querySelectorAll('.speed button').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.speed button').forEach(x => x.classList.toggle('on', x === b));
+}));
+document.querySelectorAll('.rnd').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.rnd').forEach(x => x.classList.toggle('on', x === b));
+}));
+document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));
+document.querySelectorAll('.tool').forEach(t => t.addEventListener('click', () => {
+  if (t.querySelector('use[href="#i-undo"]')) return;
+  document.querySelectorAll('.tools-v .tool').forEach(x => x.classList.toggle('on', x === t));
+}));
+const load = document.getElementById('load');
+['openLoad','openLoad2'].forEach(id => document.getElementById(id).addEventListener('click', () => load.classList.add('on')));
+load.addEventListener('click', e => { if (e.target === load) load.classList.remove('on'); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') load.classList.remove('on'); });
+</script>
+
+<!--FX-START--><script>
+/* smoke + molotov: same renderer as src/main.ts (generated) */
+(function(){
+const SMOKE_LIFETIME_SEC = 17;
+const wrap = document.querySelector('.map-wrap');
+const cv = document.getElementById('fx');
+const ctx = cv.getContext('2d');
+"use strict";
+const SMOKE_PAINT_R_WORLD_U = 144;
+const FIRE_PAINT_R_WORLD_U = 150;
+const HE_RING_SEC = 0.65;
+const FLASH_FLASH_SEC = 0.42;
+const MOLOTOV_LIFETIME_SEC = 7.5;
+const clampNum = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function seededRand(seed) {
+    return (n) => {
+        const d = Math.sin(n * 12.9898 + seed * 78.233) * 43758.5453;
+        return d - Math.floor(d);
+    };
+}
+/** Offscreen sprites, cached per (kind, seed, 1/12s bucket) so blur + gradients are not redone every frame. */
+const FX_SPRITE_R = 150;
+const FX_SPRITE_PAD = 1.3;
+const FX_SPRITES_PER_SEC = 12;
+const fxSpriteCache = new Map();
+function fxSprite(kind, seed, tSec) {
+    const bucket = Math.floor(tSec * FX_SPRITES_PER_SEC);
+    const key = `${kind}|${seed.toFixed(4)}|${bucket}`;
+    let cv = fxSpriteCache.get(key);
+    if (cv)
+        return cv;
+    if (fxSpriteCache.size > 96)
+        fxSpriteCache.clear();
+    const size = Math.ceil(FX_SPRITE_R * 2 * FX_SPRITE_PAD);
+    cv = document.createElement("canvas");
+    cv.width = size;
+    cv.height = size;
+    const g = cv.getContext("2d");
+    if (g) {
+        const c = size / 2;
+        const t = bucket / FX_SPRITES_PER_SEC;
+        if (kind === "smoke")
+            paintSmokeSprite(g, c, c, FX_SPRITE_R, t, seed);
+        else
+            paintFireSprite(g, c, c, FX_SPRITE_R, t, seed);
+    }
+    fxSpriteCache.set(key, cv);
+    return cv;
+}
+/** Wobbling blob outline (34 pts), soft inner puffs, blurred. */
+function paintSmokeSprite(g, cx, cy, R, t, seed) {
+    const rnd = seededRand(seed);
+    const N = 34;
+    const pts = [];
+    for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        const w = 0.86 + 0.12 * rnd(i + 7) + 0.03 * Math.sin(t * 1.8 + i * 0.5 + seed);
+        pts.push({ x: cx + Math.cos(a) * R * w, y: cy + Math.sin(a) * R * w });
+    }
+    const outline = () => {
+        g.beginPath();
+        g.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++)
+            g.lineTo(pts[i].x, pts[i].y);
+        g.closePath();
+    };
+    g.save();
+    g.filter = `blur(${clampNum(R * 0.06, 2, 7)}px)`;
+    const grad = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+    grad.addColorStop(0, "rgba(220,224,232,0.46)");
+    grad.addColorStop(0.7, "rgba(208,213,224,0.34)");
+    grad.addColorStop(1, "rgba(206,211,222,0.04)");
+    g.fillStyle = grad;
+    outline();
+    g.fill();
+    for (let i = 0; i < 7; i++) {
+        const a = rnd(i + 50) * Math.PI * 2 + t * 0.12;
+        const d = R * (0.1 + 0.42 * rnd(i + 80));
+        const px = cx + Math.cos(a) * d;
+        const py = cy + Math.sin(a) * d;
+        const pr = R * (0.28 + 0.22 * rnd(i + 90));
+        const pg = g.createRadialGradient(px, py, 0, px, py, pr);
+        pg.addColorStop(0, "rgba(230,234,242,0.2)");
+        pg.addColorStop(1, "rgba(220,224,232,0)");
+        g.fillStyle = pg;
+        g.beginPath();
+        g.arc(px, py, pr, 0, Math.PI * 2);
+        g.fill();
+    }
+    g.filter = "blur(1.5px)";
+    g.strokeStyle = "rgba(228,232,240,0.4)";
+    g.lineWidth = 1.5;
+    outline();
+    g.stroke();
+    g.restore();
+}
+/**
+ * Fire pool: soft glow plus stacked, flickering flame-tongue polygons (dark red outer to pale
+ * yellow core), blurred together — no discrete blobs.
+ */
+function paintFireSprite(g, cx, cy, R, t, seed) {
+    const rnd = seededRand(seed);
+    g.save();
+    const base = g.createRadialGradient(cx, cy, R * 0.1, cx, cy, R);
+    base.addColorStop(0, "rgba(255,120,30,0.30)");
+    base.addColorStop(0.7, "rgba(220,70,20,0.18)");
+    base.addColorStop(1, "rgba(180,40,10,0)");
+    g.fillStyle = base;
+    g.beginPath();
+    g.arc(cx, cy, R, 0, Math.PI * 2);
+    g.fill();
+    const layers = [
+        { scale: 1.0, color: "rgba(190,45,10,0.36)", lighter: false },
+        { scale: 0.8, color: "rgba(255,105,25,0.34)", lighter: true },
+        { scale: 0.58, color: "rgba(255,165,45,0.34)", lighter: true },
+        { scale: 0.32, color: "rgba(255,225,130,0.36)", lighter: true },
+    ];
+    g.filter = `blur(${clampNum(R * 0.045, 3, 7)}px)`;
+    const N = 44;
+    layers.forEach((layer, li) => {
+        g.globalCompositeOperation = layer.lighter ? "lighter" : "source-over";
+        g.fillStyle = layer.color;
+        g.beginPath();
+        for (let i = 0; i <= N; i++) {
+            const k = i % N;
+            const a = (k / N) * Math.PI * 2;
+            // alternating tongue / valley radius, seeded per layer, flickering over time
+            const tongue = 0.9 + 0.1 * Math.sin(k * 2.1 + seed);
+            const r = R *
+                layer.scale *
+                tongue *
+                (0.84 + 0.14 * rnd(k + li * 19 + 3) + 0.07 * Math.sin(t * 7 + k * 0.9 + li * 2 + seed));
+            const x = cx + Math.cos(a) * r;
+            const y = cy + Math.sin(a) * r;
+            if (i === 0)
+                g.moveTo(x, y);
+            else
+                g.lineTo(x, y);
+        }
+        g.closePath();
+        g.fill();
+    });
+    g.restore();
+}
+/**
+ * Timer for smoke / molotov: a thin arc just outside the cloud that depletes clockwise (so the
+ * cloud's own edge stays visible), with the seconds left centred inside.
+ */
+function drawCountdownRing(cx, cy, effectRadPx, remainingSec, totalSec, color) {
+    const frac = clampNum(remainingSec / totalSec, 0, 1);
+    const rr = effectRadPx * 1.1 + 2;
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.stroke();
+    const label = String(Math.max(0, Math.ceil(remainingSec - 1e-9)));
+    ctx.font = "700 11px Inter, Segoe UI, system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(8,10,16,0.85)";
+    ctx.strokeText(label, cx, cy + 0.5);
+    ctx.fillStyle = "#fff";
+    ctx.fillText(label, cx, cy + 0.5);
+    ctx.restore();
+}
+
+const SPOTS = { smoke: [505, 418], molly: [660, 560], flash: [430, 520] };
+function frame(ts) {
+  const dpr = window.devicePixelRatio || 1, W = wrap.clientWidth;
+  if (cv.width !== Math.round(W * dpr)) { cv.width = cv.height = Math.round(W * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, W);
+  const k = W / 1000, sec = ts / 1000;
+  const px = (u) => (u / 5.02) * (1000 / 1024) * k;     // world units -> css px at this zoom
+  // molotov: scorch + flames, 7.5s loop
+  { const age = sec % 7.5, c = [SPOTS.molly[0] * k, SPOTS.molly[1] * k], r = px(FIRE_PAINT_R_WORLD_U) * 1.35;
+    const A = r * FX_SPRITE_PAD, sp = fxSprite('fire', 3.1, age);
+    ctx.drawImage(sp, c[0] - A, c[1] - A, A * 2, A * 2); ctx.save(); ctx.globalAlpha = .8; ctx.drawImage(sp, c[0] - A, c[1] - A, A * 2, A * 2); ctx.restore();
+    drawCountdownRing(c[0], c[1], r, 7.5 - age, 7.5, 'rgba(255,150,60,0.98)'); }
+  // smoke: 17s loop
+  { const age = sec % 17, c = [SPOTS.smoke[0] * k, SPOTS.smoke[1] * k], r = px(SMOKE_PAINT_R_WORLD_U) * 1.35;
+    const A = r * FX_SPRITE_PAD, sp = fxSprite('smoke', 5.2, age);
+    ctx.drawImage(sp, c[0] - A, c[1] - A, A * 2, A * 2); ctx.save(); ctx.globalAlpha = .6; ctx.drawImage(sp, c[0] - A, c[1] - A, A * 2, A * 2); ctx.restore();
+    drawCountdownRing(c[0], c[1], r, 17 - age, 17, 'rgba(232,236,244,0.95)'); }
+  // flash: white disc, fades every 2s
+  { const z = (sec % 2) / 0.42; if (z < 1) { const c = [SPOTS.flash[0] * k, SPOTS.flash[1] * k]; ctx.save(); ctx.globalAlpha = (1 - z) * 0.7; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(c[0], c[1], px(70) * 1.35, 0, Math.PI * 2); ctx.fill(); ctx.restore(); } }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script><!--FX-END-->
+</body>
+</html>

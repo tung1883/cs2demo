@@ -50,6 +50,9 @@ type TickRow = {
   yaw?: unknown;
   team_num?: unknown;
   is_alive?: unknown;
+  health?: unknown;
+  armor_value?: unknown;
+  has_helmet?: unknown;
   player_name?: unknown;
   game_time?: unknown;
   total_rounds_played?: unknown;
@@ -117,6 +120,11 @@ function isGunFireWeapon(weapon: unknown): boolean {
     return false;
   }
   return true;
+}
+
+function numOr(v: unknown, fallback: number): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function shortenWeapon(slug: unknown): string {
@@ -434,6 +442,9 @@ export async function buildDemoData(
     "total_rounds_played",
     "balance",
     "active_weapon_name",
+    "health",
+    "armor_value",
+    "has_helmet",
   ];
 
   await prog("ticks", 13, "Running parseTicks…");
@@ -539,6 +550,9 @@ export async function buildDemoData(
       utils,
       hasBomb,
       Number.isFinite(sz) ? sz! : 0,
+      numOr(row.health, -1),
+      numOr(row.armor_value, 0),
+      row.has_helmet ? 1 : 0,
     ]);
     if (row.total_rounds_played != null) {
       frame.round = Number(row.total_rounds_played);
